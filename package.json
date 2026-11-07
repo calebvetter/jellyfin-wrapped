@@ -1,0 +1,46 @@
+{
+	"name": "jellyfin-wrapped",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "A Spotify Wrapped-inspired annual viewing experience for Jellyfin users.",
+	"engines": {
+		"node": ">=22.13",
+		"pnpm": ">=10"
+	},
+	"scripts": {
+		"dev": "vite dev --host 0.0.0.0",
+		"dev:start": "node scripts/devserver.mjs start",
+		"dev:stop": "node scripts/devserver.mjs stop",
+		"dev:restart": "node scripts/devserver.mjs restart",
+		"dev:status": "node scripts/devserver.mjs status",
+		"dev:logs": "node scripts/devserver.mjs logs",
+		"build": "vite build",
+		"preview": "vite preview --host 0.0.0.0",
+		"start": "node build/index.js",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"screenshots": "node scripts/screenshots.mjs",
+		"doctor": "node scripts/doctor.mjs"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-node": "^5.5.8",
+		"@sveltejs/kit": "^2.70.4",
+		"@sveltejs/vite-plugin-svelte": "^7.3.1",
+		"@types/node": "^24.19.2",
+		"playwright": "^1.65.0",
+		"svelte": "^5.57.3",
+		"svelte-check": "^4.7.8",
+		"typescript": "^6.0.3",
+		"vite": "^8.3.6",
+		"vitest": "^4.1.12"
+	},
+	"dependencies": {
+		"@fontsource-variable/bricolage-grotesque": "^5.3.0",
+		"@fontsource-variable/dm-sans": "^5.3.0",
+		"@fontsource/instrument-serif": "^5.3.0",
+		"gsap": "^3.15.1"
+	},
+	"packageManager": "pnpm@10.34.7"
+}

@@ -1,0 +1,32 @@
+# Jellyfin Wrapped — production deployment.
+#
+#   cp .env.example .env    # fill in URLs, API keys, APP_SECRET, ORIGIN
+#   docker compose up -d
+#
+# Uses the image published to GHCR by .github/workflows/docker-publish.yml.
+# To build locally instead: docker compose up -d --build
+
+services:
+  wrapped:
+    image: ghcr.io/${GHCR_OWNER:-your-github-user}/jellyfin-wrapped:${WRAPPED_TAG:-latest}
+    build: .
+    container_name: jellyfin-wrapped
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Fixed inside the container; everything else comes from .env
+      DATA_DIR: /data
+      PORT: 3000
+    ports:
+      - "${WRAPPED_PORT:-3000}:3000"
+    volumes:
+      - wrapped-data:/data
+    # Read-only root filesystem: all writes go to the /data volume.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  wrapped-data:

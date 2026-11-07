@@ -1,0 +1,16 @@
+node_modules
+build
+.svelte-kit
+.dev
+data
+data-*
+screenshots
+test-results
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+Dockerfile
+docker-compose.yml
