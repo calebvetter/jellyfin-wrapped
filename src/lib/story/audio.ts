@@ -22,6 +22,22 @@ interface Deck {
 	releasedAt: number;
 }
 
+/**
+ * iOS treats Web Audio as "ambient" sound, which the ring/silent switch mutes. The Audio
+ * Session API (Safari 16.4+) lets the page act like a media player instead: 'playback'
+ * follows the volume buttons and ignores the silent switch. Like any media app it also
+ * pauses other apps' audio, so it's only claimed while sound is on. No-op elsewhere.
+ */
+function setAudioSession(type: 'playback' | 'auto') {
+	const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+	if (!session) return;
+	try {
+		session.type = type;
+	} catch {
+		/* unsupported value / browser */
+	}
+}
+
 const CROSSFADE = 1.6;
 /** Volume dip (seconds each way) when a segment loops back to its start. */
 const LOOP_FADE = 0.18;
@@ -78,6 +94,8 @@ export class AudioDirector {
 		if (this.unlocked) return;
 		const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
 		if (!Ctor) return;
+		// before the context starts, so iOS opens it as media playback (plays in silent mode)
+		if (!muted) setAudioSession('playback');
 		this.ctx = new Ctor();
 		this.master = this.ctx.createGain();
 		this.master.gain.value = muted ? 0 : 1;
@@ -242,6 +260,7 @@ export class AudioDirector {
 
 	setMuted(muted: boolean) {
 		this.muted = muted;
+		if (!muted) setAudioSession('playback');
 		if (this.master) this.ramp(this.master, muted ? 0 : 1, 0.3);
 	}
 
@@ -305,6 +324,7 @@ export class AudioDirector {
 		this.decks = [];
 		void this.ctx?.close().catch(() => {});
 		this.ctx = null;
+		setAudioSession('auto');
 	}
 
 	// ------------------------------------------------------------------ sound effects
