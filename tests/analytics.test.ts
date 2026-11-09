@@ -14,12 +14,14 @@ const ids = { visit: 'visit-0000001', session: 'session-00001', device: 'device-
 
 describe('engagement tracking', () => {
 	it('issues scoped, expiring tracking tokens', () => {
-		const t = issueTrackingToken('u1', 2026, 'link', 15);
-		expect(verifyTrackingToken(t)).toMatchObject({ u: 'u1', y: 2026, m: 'link', n: 15 });
+		// a long id so random ciphertext can't contain it by chance (a 2-char id made this flaky)
+		const user = 'jellyfin-user-0f3a9c';
+		const t = issueTrackingToken(user, 2026, 'link', 15);
+		expect(verifyTrackingToken(t)).toMatchObject({ u: user, y: 2026, m: 'link', n: 15 });
 		expect(verifyTrackingToken(t + 'x')).toBeNull();
 		// public share-link pages carry this token: it must not reveal the Jellyfin user id
 		const decoded = t.split('.').map((p) => Buffer.from(p, 'base64url').toString('latin1')).join('');
-		expect(t + decoded).not.toContain('u1');
+		expect(t + decoded).not.toContain(user);
 	});
 
 	it('rejects batches without a valid token (e.g. admin previews get none)', () => {
