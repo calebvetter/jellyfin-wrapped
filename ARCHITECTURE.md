@@ -30,7 +30,7 @@ src/lib/server/           server-only code
   integrations/           jellyfin.ts jellystat.ts seerr.ts http.ts
   prep/                   time normalize aggregate personality requests resolve report runner
   artwork.ts soundtrack.ts analytics.ts links.ts reports.ts viewer.ts admin.ts
-src/lib/shared/           report.ts (schema + slide order/labels), soundtrack.ts (cue plan, slide durations)
+src/lib/shared/           report.ts (schema + slide order/labels), soundtrack.ts (cue plan, slide durations), clock.ts (viewer-timezone clock)
 src/lib/story/            Story player, slides/, audio, tracker, Gate, Backdrop, Poster, Emblem
 src/lib/mock/             mock report for /preview
 src/routes/               / (login)  /wrapped  /w/[token]  /preview  /admin/**  /art /audio  /api/**
@@ -82,6 +82,13 @@ The pipeline is orchestrated by `prep/runner.ts`. Only one run executes at a tim
 
 The range is local Jan 1 → local Jan 1 of the next year, or → now for the current year (year to date). Timezone handling is in `prep/time.ts`: Intl-based, with offsets cached per UTC hour.
 
+**Viewer-timezone clock** (`$shared/clock.ts`): everything is prepared in `WRAPPED_TIMEZONE`, except that the time-of-day stats follow whoever is watching.
+- Jellystat stores no timezone per play. Its `RemoteEndPoint` would allow a GeoIP lookup, but only if Jellyfin sees real client IPs: behind a Docker reverse proxy it records the proxy's address unless the proxy is listed in Jellyfin's *Known proxies*. So the viewer's browser zone is used instead.
+- The clock slide carries `utc`, a sparse histogram of seconds per UTC half-hour per week (`buildClockHistogram`, flat `[week, halfHour, seconds]` triples from `base`).
+- After mount, `Story.svelte` runs `localizeReport(report, viewerTimezone())`. This re-buckets the histogram into local hours using each week's mid-week offset, so DST is right to within a week and +5:30-style zones are handled. It recomputes the persona, window share and peak hour, and the summary's "Prime viewing" tile.
+- Nothing changes when the viewer is in the report's own zone, the zone is unknown, or the report predates `utc` (re-prepare to add it). Admin previews follow the admin's browser zone.
+- Days, streaks, the busiest day and binge dates stay in `WRAPPED_TIMEZONE`. `stats.clock` on the admin user page is also in that zone.
+
 ## Metadata Resolution & Caching
 
 `prep/resolve.ts` resolves each Jellyfin item id in this order:
@@ -127,11 +134,11 @@ Every slide uses the same cleaned `View[]`.
 | Genre DNA | Watch time split evenly across a title's normalized genres (aliases such as "Sci-Fi & Fantasy" are mapped). Top 7 + "Everything else". Needs ≥ 3 genres and ≥ 2 h. |
 | You Had a Type | Ranked by distinct *meaningfully watched* titles (`meaningfulTitle`: movie ≥ 40 min or completed; series ≥ 2 episodes or ≥ 60 min) that feature the actor in their top 10 billed cast (`ACTOR_CAST_DEPTH`; deeper ensemble/bit roles don't count). Ties go to role prominence (Σ `1/(1+(billing−1)/4)`: lead roles beat ensemble parts), then watch time, then best billing. Needs ≥ 2 titles. Admin stats store a per-actor breakdown (title, role, billing, time) for auditing. |
 | Binge | Same series, breaks ≤ 45 min, ranked by distinct episodes then time. Needs ≥ 3. |
-| Clock | Minutes per local hour. The persona is the 4-hour window with the most minutes (windows are fixed by the brief). |
+| Clock | Minutes per local hour. The persona is the 4-hour window with the most minutes (windows are fixed by the brief). Follows the **viewer's** timezone, see below. |
 | Busiest day | Local day with the most watch time. |
 | Streak | Consecutive local days with ≥ 10 min. Needs ≥ 3. The heat grid holds per-day quartile levels. |
 | Original | Lowest TMDb popularity among meaningful titles (`meaningfulTitle`). Needs ≥ 4 candidates. The percentile is against every title watched on the server (anonymous). |
-| Requests / Good Taste | Distinct non-declined titles requested in range. A title counts as Good Taste if any **other** user meaningfully watched it after the request. Reports only receive counts. |
+| Requests / Good Taste | Distinct non-declined titles requested in range. A title counts as Good Taste if any **other** user meaningfully watched it after the request. Reports only receive counts. Posters are ordered by everyone's watch time since the request, and Good Taste titles by other users' watch time. The slide spotlights only the first Good Taste title (always given a card), and that title sets the slide's music. |
 | Personality | `personality.ts`: each trait computes a strength (≥ 1 qualifies) and the strongest qualifying trait wins. If nothing qualifies, the fallback is Cinema Connoisseur or Deep Diver, needing ≥ 3 h total. Explanations quote real numbers. |
 
 Slides without enough data are omitted, and so is any user under 30 meaningful minutes.
@@ -174,6 +181,8 @@ Each backdrop column duplicates its posters and scrolls by `translateY(-50%)`. T
 - Each half is taller than the wall, including on 4K screens.
 
 **Gate** (`Gate.svelte`): a "tap to start" screen that unlocks audio inside the gesture. Its buttons are disabled until hydration so early taps are never lost.
+
+**Tap to reveal** (`ctx.interceptAdvance`): a slide can claim a manual "next" (tap, arrow key or side button, never auto-advance). Story asks the current layer's handler first and stays on the slide while it returns true. The handler also resumes the story if it was paused. Personality uses this. A "next" before the card has turned over starts the reveal at once: the wobble settles, the drumroll is cut with `ctx.stopSfx`, and the card turns from wherever it is (on landing, if it's still flying in). A "next" while it is still turning is ignored. After that, "next" works as usual. The reveal's elements start hidden with `gsap.set` because the reveal timeline is only built when it starts. Every sound effect plays through its own gain node so `AudioDirector.stopSfx(name)` can fade it out.
 
 **Adding a slide:**
 1. Add the type to `report.ts` and `SLIDE_ORDER` / `SLIDE_LABELS`.
@@ -241,8 +250,10 @@ The admin page lists them heaviest first and reports coverage. It also registers
 
 **Generic music** (`GENERIC_KEY = 'generic'` in `soundtrack_audio.title_key`; `music_slots` table, migration 5; card `routes/admin/soundtrack/GenericMusic.svelte`, API `POST /api/admin/soundtrack/generic`):
 - A pool of tracks not tied to any title: YouTube grabs (`addGenericYouTube`) or any Deezer song's 30 s preview (`searchTracks` → `addGenericDeezer`). Adding never replaces; each is trimmed/removed individually.
+- Generic YouTube grabs play **in full** until the admin clips them; the 0–30 s default applies only to title music. Migration 6 removed that automatic clip from generic tracks added earlier.
 - **Slots** (`MUSIC_SLOTS` in `$shared/music.ts`): `intro`, `total-time`, `clock`, `streak`, `personality`, `summary` (also the Rewatch outro) and `fallback`. `setSlot(slot, audioId | null)` only accepts generic tracks; deleting a track clears its slots.
 - In the music plan an assigned slot overrides that screen for everyone; unassigned screens behave as before. `fallback` replaces the server's most-featured tracks for users with no music of their own (it never overrides a user's own music). Disabled tracks are skipped (`slotTracks`).
+- Generic tracks are background music: `toTrack` gives them an empty label, so the story shows no "now playing" pill for them.
 
 **Sound effects** (`$shared/sfx.ts` lists them; page `/admin/sound-effects`, API `/api/admin/sfx/<name>`):
 - Each is synthesized by `AudioDirector.sfx()` unless replaced. A replacement is a `soundtrack_audio` row with `title_key = 'sfx:<name>'`, source `upload` (multipart, ≤ 15 MB, audio MIME + magic-byte check) or `youtube` (JSON `{ url }`). Replacing deletes the previous row and file; `DELETE` resets to the built-in sound.
@@ -263,7 +274,7 @@ The admin page lists them heaviest first and reports coverage. It also registers
 - **Album covers** are cached through the artwork cache (`localCover`, Deezer's `dzcdn.net` CDN only) and served from `/art/<hash>`, because the CSP is `img-src 'self'`.
 
 **Music plan** (`server/music-plan.ts`, a pure function built at page load so new picks apply without re-preparing):
-- Each slide plays its own title's music: the #1 show on Top Shows, the #1 movie on Top Movies, the binge series, the obscure pick, the Good Taste examples, and so on.
+- Each slide plays its own title's music: the #1 show on Top Shows, the #1 movie on Top Movies, the binge series, the obscure pick, the spotlit Good Taste title, and so on. On Requests, if the spotlit title has no music, the current music keeps playing. It never falls through to another poster's music, which wouldn't match the screen. With no Good Taste title, the most-watched request with music is used.
 - If the music already playing belongs to one of the slide's titles, it keeps playing.
 - Total watch time, the clock and the streak keep the current music.
 - Personality switches to a fresh track.
@@ -274,10 +285,11 @@ The admin page lists them heaviest first and reports coverage. It also registers
 - The plan is `{ tracks, plan: trackId per slide }` (`$shared/music.ts`).
 
 **Player** (`story/audio.ts` `AudioDirector`):
-- Two decks (HTMLAudioElement → MediaElementSource → gain → music bus → master), both primed inside the start gesture so iOS allows later `play()` calls.
-- On each slide the idle deck loads the planned track, seeks to its `start`, and fades in while the other fades out over 1.6 s. The next slide's track is preloaded on the idle deck after the crossfade.
+- Two decks (HTMLAudioElement → MediaElementSource → gain → music bus → master), both primed inside the start gesture so iOS allows later `play()` calls. Priming's muted play → pause only pauses a deck that no real `play()` has claimed since (deck `token`). Otherwise the first slide's track was paused for good whenever the following slides kept the same track (e.g. one generic track on every screen). `play()` of the track already on also resumes it if it was stopped.
+- On each slide the idle deck loads the planned track, seeks to its `start`, and fades in while the other fades out over 1.6 s. Generic tracks instead resume where they were left off (`resumeAt`, saved when a deck is paused or reused), unless that is within 2 s of the segment end or the story is rewatched. Title music always restarts at its `start`. The next slide's track is preloaded on the idle deck after the crossfade.
 - Only the chosen segment plays. When it reaches `end`, or the file ends, it loops back to `start` with a quick volume dip (`LOOP_FADE` 0.18 s each way), checked every 40 ms. A segment shorter than its slide, such as an 11 s clip under a 20 s slide, loops seamlessly.
-- A "now playing" pill shows the track label for about 5 s on each change.
+- **Deferred music** (`DEFERRED_MUSIC` in `story/context.ts`: Top Shows, Top Movies): these slides open on the previous slide's planned track and switch to their own when the slide's timeline calls `ctx.musicCue()`. Top Shows cues as "And your #1 show is…" appears; Top Movies cues as the #2 ticket lands. Each cue comes at least the 1.6 s crossfade before the #1 reveal. The idle deck preloads the slide's own track on entry. With reduced motion, the cue fires on entry.
+- A "now playing" pill shows the track label for about 5 s on each change (not for generic music, which has no label).
 - Sound effects are synthesized or admin-replaced (see Sound effects); setting `sfx_enabled` turns them all off. Mute is stored in localStorage.
 
 The old mood-segment system (`audio_tracks`, cue sheets) was removed in migration 2. Orphaned audio files are deleted on startup (`cleanupOrphanAudio`).

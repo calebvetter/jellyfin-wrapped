@@ -201,5 +201,9 @@ export const MIGRATIONS: string[] = [
 		slot TEXT PRIMARY KEY,
 		audio_id TEXT NOT NULL
 	);
+	`,
+	/* 6: generic YouTube music plays in full unless clipped; undo the old automatic 0–30 s clip */ `
+	UPDATE soundtrack_audio SET segment_end = NULL
+	WHERE title_key = 'generic' AND source = 'youtube' AND start = 0 AND segment_end = 30 AND COALESCE(duration, 0) > 30;
 	`
 ];

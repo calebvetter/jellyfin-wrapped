@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { gsap } from 'gsap';
 	import type { PersonalitySlide } from '$shared/report';
 	import { story } from '../context';
 	import { confetti, offBelow } from '../anim';
@@ -26,19 +27,58 @@
 	const color = $derived(COLORS[slide.id] ?? ['#ff3ea5', '#14080a']);
 	const nameSize = $derived(slide.name.length > 22 ? 8.5 : 10);
 
+	/** When the card has landed and starts to wobble (s into the slide). */
+	const LANDED = 1.1;
+	/** Scheduled reveal, unless a tap asks for it sooner. */
+	const REVEAL_AT = 3.4;
+	/** The reveal counts as done once the card has turned over. */
+	const FLIP = 0.9;
+
 	onMount(() => {
-		s.timeline(root, (tl, q) => {
+		let intro: gsap.core.Timeline | undefined; // unset while it's being built (reduced motion reveals right away)
+		let flipDone = 0; // reveal-timeline time when the card has turned over
+		let shake: gsap.core.Tween | null = null;
+		let reveal: gsap.core.Timeline | null = null;
+
+		// Flip the card. A tap before REVEAL_AT starts this early: the wobble settles and the
+		// drumroll fades instead of the slide being skipped (no jump: the card turns from wherever it is).
+		const startReveal = () => {
+			if (reveal) return;
+			const at = intro ? Math.max(0, LANDED - intro.time()) : 0; // still flying in: turn over as it lands
+			flipDone = at + FLIP;
+			shake?.kill();
+			s.stopSfx('drumroll');
+			reveal = s.timeline(root, (tl, q) => {
+				tl.to(q('.card'), { rotate: 0, rotateY: 180, duration: FLIP, ease: 'back.out(1.4)' }, at)
+					.add(() => s.sfx('reveal'), at + 0.1)
+					.to(q('.pre'), { opacity: 0.5, duration: 0.4 }, at)
+					.to(q('.front .emblem-wrap'), { scale: 1, rotate: 0, duration: 0.9, ease: 'elastic.out(1, 0.5)' }, at + 0.5)
+					.to(q('.below > *'), { y: 0, opacity: 1, duration: 0.6, stagger: 0.14 }, at + 1)
+					.to(q('.chip'), { scale: 1, duration: 0.5, stagger: 0.1, ease: 'back.out(2)' }, at + 1.6);
+				confetti(tl, root, at + 0.3, { x: 50, y: 38, count: 50, colors: [color[0], '#fff', '#ffe14d', '#2de2e6'] });
+			});
+		};
+
+		intro = s.timeline(root, (tl, q) => {
+			// the reveal's elements start hidden (the reveal timeline is built later)
+			gsap.set(q('.front .emblem-wrap'), { scale: 0, rotate: -90 });
+			gsap.set(q('.below > *'), { y: 30, opacity: 0 });
+			gsap.set(q('.chip'), { scale: 0 });
+			shake = gsap.to(q('.card'), { rotate: 3, duration: 0.08, yoyo: true, repeat: 23, ease: 'sine.inOut' });
 			tl.from(q('.pre'), { y: 30, opacity: 0, duration: 0.6 }, 0.1)
-				.from(q('.card'), { y: offBelow(root), rotateY: 0, duration: 0.9, ease: 'back.out(1.3)' }, 0.3)
-				.add(() => s.sfx('drumroll'), 0.6)
-				.to(q('.card'), { rotate: 3, duration: 0.08, yoyo: true, repeat: 23, ease: 'sine.inOut' }, 1.1)
-				.to(q('.card'), { rotateY: 180, duration: 0.9, ease: 'back.out(1.4)' }, 3.4)
-				.add(() => s.sfx('reveal'), 3.5)
-				.to(q('.pre'), { opacity: 0.5, duration: 0.4 }, 3.4)
-				.from(q('.front .emblem-wrap'), { scale: 0, rotate: -90, duration: 0.9, ease: 'elastic.out(1, 0.5)' }, 3.9)
-				.from(q('.below > *'), { y: 30, opacity: 0, duration: 0.6, stagger: 0.14 }, 4.4)
-				.from(q('.chip'), { scale: 0, duration: 0.5, stagger: 0.1, ease: 'back.out(2)' }, 5);
-			confetti(tl, root, 3.7, { x: 50, y: 38, count: 50, colors: [color[0], '#fff', '#ffe14d', '#2de2e6'] });
+				.from(q('.card'), { y: offBelow(root), duration: 0.9, ease: 'back.out(1.3)' }, 0.3)
+				.add(() => !reveal && s.sfx('drumroll'), 0.6)
+				.add(shake, LANDED)
+				.add(startReveal, REVEAL_AT);
+		});
+
+		// "next" before the card has fully turned over reveals it instead of leaving the slide
+		s.interceptAdvance(() => {
+			if (!reveal) {
+				startReveal();
+				return true;
+			}
+			return reveal.time() < flipDone && reveal.progress() < 1;
 		});
 		s.timeline(root, (tl, q) => {
 			tl.to(q('.glow'), { rotate: 360, duration: 12, ease: 'none', repeat: -1 }, 0);

@@ -1,10 +1,12 @@
 /**
  * The ready-to-play Wrapped report. Produced once during preparation, stored as JSON,
- * and rendered by the story player without any recalculation.
+ * and rendered by the story player without any recalculation (the one exception: the
+ * clock follows the viewer's timezone, see $shared/clock).
  *
  * Only the requesting user's own data may appear here (plus anonymous aggregate counts,
  * e.g. the Good Taste metric). Never put other users' names or histories in a report.
  */
+import type { ClockHistogram } from './clock';
 
 export const REPORT_VERSION = 1;
 
@@ -96,6 +98,8 @@ export interface ClockSlide {
 	personaTitle: string;
 	windowShare: number; // share of minutes in the persona's 4-hour window
 	peakHour: number;
+	/** Viewing by UTC time, so the browser can redo the above in the viewer's timezone ($shared/clock). Absent on older reports. */
+	utc?: ClockHistogram;
 }
 
 export interface BusiestDaySlide {
@@ -133,10 +137,11 @@ export interface RequestsSlide {
 	total: number;
 	movies: number;
 	shows: number;
-	posters: TitleRef[];
+	posters: TitleRef[]; // most watched first
 	goodTaste: {
 		titles: number; // distinct requested titles later watched by at least one other user
 		viewers: number; // distinct other users (count only — never names)
+		/** Most watched by others first; examples[0] is the highlighted title and sets the music. */
 		examples: TitleRef[];
 	};
 }

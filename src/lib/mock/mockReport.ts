@@ -8,6 +8,22 @@ import { REPORT_VERSION } from '$shared/report';
 const SHOWS = ['The Salt Kingdom', 'Night Shift at Orbit 9', 'Bakers of Brindle Lane', 'Static & Smoke', 'The Long Thaw', 'Velvet Precinct', 'Tidepool'];
 const MOVIES = ['Paper Comets', 'Glass Harbor', 'The Last Lighthouse Keeper', 'Midnight Velocity', 'Honey & Thunder', 'Arcadia Drive', 'Fog Over Kestrel'];
 
+/** Minutes per local hour (America/Chicago, the mock's zone). */
+const MOCK_HOURLY = [210, 120, 40, 12, 4, 2, 6, 14, 22, 30, 45, 60, 90, 110, 105, 120, 180, 260, 420, 610, 820, 980, 860, 540];
+
+/** MOCK_HOURLY as a UTC histogram (all in January, Chicago = UTC−6), so /preview shows the clock in the viewer's zone. */
+function mockClockHistogram(year: number) {
+	const cells: number[] = [];
+	const byHalf = new Map<number, number>();
+	MOCK_HOURLY.forEach((m, h) => {
+		const u = (h + 6) % 24;
+		byHalf.set(u * 2, m * 30);
+		byHalf.set(u * 2 + 1, m * 30);
+	});
+	for (const half of [...byHalf.keys()].sort((a, b) => a - b)) cells.push(0, half, byHalf.get(half)!);
+	return { base: Date.UTC(year, 0, 1), cells };
+}
+
 const poster = (seed: string) => `/preview/art/poster/${encodeURIComponent(seed)}`;
 const person = (seed: string) => `/preview/art/person/${encodeURIComponent(seed)}`;
 
@@ -122,11 +138,12 @@ export function mockReport(opts: MockOptions = {}): WrappedReport {
 		},
 		{
 			kind: 'clock',
-			hourly: [210, 120, 40, 12, 4, 2, 6, 14, 22, 30, 45, 60, 90, 110, 105, 120, 180, 260, 420, 610, 820, 980, 860, 540],
+			hourly: MOCK_HOURLY,
 			persona: 'night-owl',
 			personaTitle: 'The Night Owl',
 			windowShare: 0.47,
-			peakHour: 21
+			peakHour: 21,
+			utc: mockClockHistogram(year)
 		},
 		{
 			kind: 'busiest-day',

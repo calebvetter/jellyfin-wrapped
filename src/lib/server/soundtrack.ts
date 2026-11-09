@@ -415,9 +415,9 @@ export async function addYouTube(titleKey: string, url: string): Promise<AudioRo
 
 // ------------------------------------------------------------------ generic music
 
-/** Add a YouTube grab to the generic-music pool (tracks not tied to any title). */
+/** Add a YouTube grab to the generic-music pool (tracks not tied to any title). Plays in full until the admin clips it. */
 export async function addGenericYouTube(url: string): Promise<AudioRow> {
-	return storeAudio(GENERIC_KEY, await grabYouTube(url, defaultSegment), false);
+	return storeAudio(GENERIC_KEY, await grabYouTube(url, () => ({ start: 0, end: null })), false);
 }
 
 /** Add a Deezer song's 30-second preview to the generic-music pool. */
@@ -756,7 +756,8 @@ function toTrack(r: AudioRow, titles: Map<string, string>): MusicTrack {
 		start: r.start,
 		end: r.segment_end ?? null,
 		gain: r.gain,
-		label: title && !name.toLowerCase().includes(title.toLowerCase()) ? `${name} · ${title}` : name,
+		// generic music is background music: no "now playing" credit in the story
+		label: r.title_key === GENERIC_KEY ? '' : title && !name.toLowerCase().includes(title.toLowerCase()) ? `${name} · ${title}` : name,
 		titleKey: r.title_key
 	};
 }

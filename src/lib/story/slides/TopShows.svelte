@@ -27,6 +27,7 @@
 			const tease = 0.8 + rows.length * 1.05 + 0.2;
 			tl.fromTo(q('.tease'), { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.6, ease: 'back.out(2)' }, tease)
 				.add(() => s.sfx('drumroll'), tease)
+				.add(() => s.musicCue(), tease) // #1's music fades in under "And your #1…", fully in by the reveal
 				.to(q('.tease'), { scale: 1.06, duration: 0.18, yoyo: true, repeat: 5, ease: 'sine.inOut' }, tease + 0.6)
 				.to(q('.tease'), { scale: 3, opacity: 0, duration: 0.45, ease: 'power2.in' }, tease + 1.9);
 			const hero = tease + 2.2;

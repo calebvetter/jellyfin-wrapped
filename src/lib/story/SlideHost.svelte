@@ -14,9 +14,12 @@
 		preview: boolean;
 		sfx: (name: SfxName, opts?: { delay?: number; pitch?: number }) => void;
 		onRewatch: () => void;
+		onMusicCue: () => void;
+		stopSfx: (name: SfxName) => void;
+		setAdvanceHandler: (handler: (() => boolean) | null) => void;
 	}
 
-	let { slide, report, reducedMotion, duration, preview, sfx, onRewatch }: Props = $props();
+	let { slide, report, reducedMotion, duration, preview, sfx, onRewatch, onMusicCue, stopSfx, setAdvanceHandler }: Props = $props();
 
 	const contexts: gsap.Context[] = [];
 
@@ -34,6 +37,9 @@
 			return preview;
 		},
 		sfx: (name, opts) => sfx(name, opts),
+		musicCue: () => onMusicCue(),
+		stopSfx: (name) => stopSfx(name),
+		interceptAdvance: (handler) => setAdvanceHandler(handler),
 		timeline(root, build) {
 			let tl!: gsap.core.Timeline;
 			const c = gsap.context(() => {
@@ -54,6 +60,7 @@
 	setStoryContext(ctx);
 
 	onMount(() => () => {
+		setAdvanceHandler(null);
 		for (const c of contexts) c.revert();
 	});
 

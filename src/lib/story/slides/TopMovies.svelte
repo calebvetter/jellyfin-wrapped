@@ -27,6 +27,8 @@
 				tl.from(t, { y: 120, rotate: i % 2 ? 14 : -14, opacity: 0, duration: 0.7, ease: 'back.out(1.5)' }, at).add(() => s.sfx('tick', { pitch: 0.7 + i * 0.1 }), at);
 			});
 			const reveal = 1.2 + tickets.length * 0.95 + 0.6;
+			// #1's music fades in as the #2 ticket lands (the last one before the curtain), fully in by the reveal
+			tl.add(() => s.musicCue(), tickets.length ? 1.2 + (tickets.length - 1) * 0.95 : Math.max(0, reveal - 1.7));
 			tl.add(() => s.sfx('drumroll'), reveal - 1.1)
 				.to(q('.curtain.l'), { xPercent: -100, duration: 1.3, ease: 'power3.inOut' }, reveal)
 				.to(q('.curtain.r'), { xPercent: 100, duration: 1.3, ease: 'power3.inOut' }, reveal)

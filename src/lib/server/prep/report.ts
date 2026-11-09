@@ -22,6 +22,8 @@ import {
 	type Ctx
 } from './aggregate';
 import { choosePersonality, PERSONALITY_NAMES, scorePersonalities, type PersonalityMetrics } from './personality';
+import { viewIntervals } from './normalize';
+import { buildClockHistogram } from '$shared/clock';
 import { dayNumberToKey, localDayNumber, localIso, weekdayName } from './time';
 import {
 	REPORT_VERSION,
@@ -33,6 +35,8 @@ import {
 } from '$shared/report';
 
 export const MIN_REPORT_MINUTES = 30;
+/** Poster cards shown on the requests slide. */
+export const REQUEST_CARDS = 8;
 export const OBSCURE_POPULARITY = 8;
 export const POPULAR_POPULARITY = 25;
 
@@ -224,7 +228,9 @@ export async function buildReport(input: BuildInput): Promise<BuildOutput> {
 			persona: clock.id,
 			personaTitle: clock.title,
 			windowShare: clock.share,
-			peakHour: clock.peakHour
+			peakHour: clock.peakHour,
+			// lets the browser redo the clock in the viewer's own timezone
+			utc: buildClockHistogram(views.flatMap(viewIntervals), ctx.rangeStart)
 		});
 	}
 
@@ -293,7 +299,10 @@ export async function buildReport(input: BuildInput): Promise<BuildOutput> {
 	// ---- requests
 	const req = input.requests;
 	if (req && req.total > 0) {
+		// most-watched first; the star (the Good Taste title others watched most) always gets a card
 		const posters = req.titles.map((x) => x.posterTitle).filter((x): x is TitleRef => Boolean(x));
+		const star = req.goodTasteExamples[0];
+		if (star && !posters.slice(0, REQUEST_CARDS).some((p) => p.key === star.key)) posters.splice(0, 0, star);
 		const slide: RequestsSlide = {
 			kind: 'requests',
 			total: req.total,

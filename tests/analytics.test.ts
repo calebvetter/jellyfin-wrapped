@@ -104,4 +104,19 @@ describe('good taste', () => {
 		expect(s.goodTaste.map((g) => g.tmdbId)).toEqual([2]);
 		expect(s.goodTasteViewers).toBe(2);
 	});
+
+	it('ranks requests by watch time, and Good Taste titles by what others watched', () => {
+		const requests = [req('me', 1, T), req('me', 2, T), req('me', 3, T)];
+		const views = [
+			view('me', 'movie:tmdb:1', T + 86400_000),
+			view('me', 'movie:tmdb:1', T + 2 * 86400_000),
+			view('me', 'movie:tmdb:1', T + 3 * 86400_000), // 3 h, all mine
+			view('u2', 'movie:tmdb:2', T + 86400_000), // 1 h by others
+			view('u2', 'movie:tmdb:3', T + 86400_000),
+			view('u3', 'movie:tmdb:3', T + 86400_000) // 2 h by others
+		];
+		const s = requestStats('me', requests, views, range, keysFor);
+		expect(s.titles.map((t) => t.tmdbId)).toEqual([1, 3, 2]);
+		expect(s.goodTaste.map((t) => t.tmdbId)).toEqual([3, 2]);
+	});
 });

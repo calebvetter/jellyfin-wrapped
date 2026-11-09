@@ -5,7 +5,6 @@
 import type { TitleMeta, View } from './model';
 import { viewIntervals } from './normalize';
 import { forEachLocalHour, localDayNumber, toLocal, weekdayIndex, type Interval } from './time';
-import type { ClockPersonaId } from '$shared/report';
 
 export interface Ctx {
 	tz: string;
@@ -341,14 +340,7 @@ export function binges(views: View[]): Binge[] {
 
 // ---------------------------------------------------------------- clock
 
-export const CLOCK_PERSONAS: { id: ClockPersonaId; title: string; hours: number[] }[] = [
-	{ id: 'early-bird', title: 'The Early Bird', hours: [5, 6, 7, 8] },
-	{ id: 'daytime-drifter', title: 'The Daytime Drifter', hours: [9, 10, 11, 12] },
-	{ id: 'afternoon-escapist', title: 'The Afternoon Escapist', hours: [13, 14, 15, 16] },
-	{ id: 'prime-time', title: 'Prime-Time Royalty', hours: [17, 18, 19, 20] },
-	{ id: 'night-owl', title: 'The Night Owl', hours: [21, 22, 23, 0] },
-	{ id: 'midnight-gremlin', title: 'The Midnight Gremlin', hours: [1, 2, 3, 4] }
-];
+export { CLOCK_PERSONAS, clockPersona } from '$shared/clock';
 
 export interface DailyAgg {
 	seconds: number;
@@ -384,14 +376,6 @@ export function timeBuckets(views: View[], tz: string): TimeBuckets {
 	return { hourly, daily, weekendSeconds };
 }
 
-export function clockPersona(hourly: number[]) {
-	const total = hourly.reduce((a, b) => a + b, 0);
-	const scored = CLOCK_PERSONAS.map((p) => ({ ...p, seconds: p.hours.reduce((s, h) => s + hourly[h], 0) }));
-	scored.sort((a, b) => b.seconds - a.seconds);
-	const best = scored[0];
-	const peakHour = hourly.indexOf(Math.max(...hourly));
-	return { id: best.id, title: best.title, share: total ? best.seconds / total : 0, peakHour, totalSeconds: total };
-}
 
 // ---------------------------------------------------------------- days & streaks
 

@@ -11,7 +11,7 @@
  * - Sound effects are generated with oscillators/noise — no bundled audio assets.
  */
 import type { SfxName } from './context';
-import type { MusicTrack } from '$shared/music';
+import { GENERIC_KEY, type MusicTrack } from '$shared/music';
 import type { CustomSfx } from '$shared/sfx';
 
 interface Deck {
@@ -55,6 +55,8 @@ export class AudioDirector {
 	private active = -1;
 	private noise: AudioBuffer | null = null;
 	private byId: Map<string, MusicTrack>;
+	/** Where each generic track was left off, so it picks up there when it comes back. */
+	private resumeAt = new Map<string, number>();
 	muted = false;
 	paused = false;
 	sfxEnabled = true;
@@ -106,9 +108,12 @@ export class AudioDirector {
 				el.src = first.url;
 				deck.trackId = first.id;
 				el.muted = true;
+				const primed = deck.token;
 				el.play()
 					.then(() => {
-						el.pause();
+						// play() for the first slide usually lands before this resolves; pausing
+						// then would silence it for good when the next slides use the same track
+						if (deck.token === primed) el.pause();
 						el.muted = false;
 					})
 					.catch(() => {
@@ -129,6 +134,8 @@ export class AudioDirector {
 	}
 
 	private load(deck: Deck, t: MusicTrack) {
+		// note where the deck was (e.g. a generic track still fading out after a quick tap)
+		if (deck.el.currentTime > 0) this.remember(deck);
 		if (deck.trackId === t.id && deck.el.src) return;
 		deck.trackId = t.id;
 		deck.el.src = t.url;
@@ -153,7 +160,11 @@ export class AudioDirector {
 		const t = this.byId.get(trackId);
 		if (!t) return;
 		const cur = this.decks[this.active];
-		if (cur && cur.trackId === trackId && !opts.restart) return;
+		if (cur && cur.trackId === trackId && !opts.restart) {
+			// same music carries on; if something stopped it (e.g. the browser), pick it back up
+			if (!this.paused && cur.el.paused) void cur.el.play().catch(() => {});
+			return;
+		}
 
 		const nextIdx = this.active === 0 ? 1 : 0;
 		const deck = this.decks[nextIdx];
@@ -165,7 +176,7 @@ export class AudioDirector {
 			if (started || deck.token !== token) return;
 			started = true;
 			try {
-				deck.el.currentTime = t.start;
+				deck.el.currentTime = this.startOf(t, opts.restart);
 			} catch {
 				/* not seekable yet; plays from 0 */
 			}
@@ -178,7 +189,10 @@ export class AudioDirector {
 				prev.releasedAt = performance.now();
 				const el = prev.el;
 				window.setTimeout(() => {
-					if (this.decks[this.active] !== prev) el.pause();
+					if (this.decks[this.active] !== prev) {
+						el.pause();
+						this.remember(prev);
+					}
 				}, CROSSFADE * 1000 + 100);
 			}
 			this.onTrack?.(t);
@@ -188,6 +202,21 @@ export class AudioDirector {
 			deck.el.addEventListener('loadedmetadata', begin, { once: true });
 			window.setTimeout(begin, 2500); // never wait forever on a slow network
 		}
+	}
+
+	/** Generic music resumes where it was left off (within its segment); everything else starts at its best section. */
+	private startOf(t: MusicTrack, restart = false): number {
+		const at = this.resumeAt.get(t.id);
+		if (restart) this.resumeAt.delete(t.id);
+		if (restart || at === undefined || t.titleKey !== GENERIC_KEY) return t.start;
+		const end = t.end ?? Infinity;
+		// too close to the segment end to be worth resuming: go round to the start
+		return at > t.start && at < end - 2 ? at : t.start;
+	}
+
+	private remember(deck: Deck) {
+		const t = deck.trackId ? this.byId.get(deck.trackId) : undefined;
+		if (t?.titleKey === GENERIC_KEY && Number.isFinite(deck.el.currentTime)) this.resumeAt.set(t.id, deck.el.currentTime);
 	}
 
 	pause() {
@@ -291,22 +320,35 @@ export class AudioDirector {
 		return buf;
 	}
 
+	private voices = new Map<string, { gain: GainNode; until: number }[]>();
+
+	/** Quickly fade out a sound effect that is still playing (e.g. a drumroll cut short by a reveal). */
+	stopSfx(name: SfxName, fade = 0.12) {
+		if (!this.ctx) return;
+		for (const v of this.voices.get(name) ?? []) this.ramp(v.gain, 0, fade);
+		this.voices.delete(name);
+	}
+
 	sfx(name: SfxName, opts: { delay?: number; pitch?: number } = {}) {
 		if (!this.ctx || !this.sfxBus || !this.sfxEnabled || this.muted || this.paused) return;
 		const ctx = this.ctx;
 		const t = ctx.currentTime + (opts.delay ?? 0);
 		const pitch = opts.pitch ?? 1;
-		const out = this.sfxBus;
+		const custom = this.customSfx.get(name);
+		// every effect plays through its own "voice" gain so it can be cut short (stopSfx)
+		const out = ctx.createGain();
+		out.connect(custom && this.customBus ? this.customBus : this.sfxBus);
+		const voices = this.voices.get(name) ?? [];
+		this.voices.set(name, [...voices.filter((v) => v.until > ctx.currentTime), { gain: out, until: t + 8 }]);
 
 		// admin-replaced sound effect (decoded ahead of time); otherwise synthesize below
-		const custom = this.customSfx.get(name);
 		if (custom && this.customBus) {
 			const src = ctx.createBufferSource();
 			src.buffer = custom.buffer;
 			src.playbackRate.value = pitch;
 			const g = ctx.createGain();
 			g.gain.value = custom.gain;
-			src.connect(g).connect(this.customBus);
+			src.connect(g).connect(out);
 			const end = Math.min(custom.end ?? custom.buffer.duration, custom.buffer.duration);
 			src.start(t, Math.min(custom.start, custom.buffer.duration), Math.max(0.03, end - custom.start));
 			return;

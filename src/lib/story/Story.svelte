@@ -6,7 +6,9 @@
 	import { SLIDE_DURATION } from '$shared/timing';
 	import type { MusicPlan, MusicTrack } from '$shared/music';
 	import type { CustomSfx } from '$shared/sfx';
+	import { localizeReport, viewerTimezone } from '$shared/clock';
 	import { AudioDirector } from './audio';
+	import { DEFERRED_MUSIC } from './context';
 	import { Tracker } from './tracker';
 	import { THEMES } from './themes';
 	import SlideHost from './SlideHost.svelte';
@@ -30,7 +32,11 @@
 		hold?: boolean;
 	}
 
-	let { report, music = { tracks: [], plan: [] }, customSfx = {}, trackingToken = null, preview = false, sfxEnabled = true, startAt = null, badge = null, hold = false }: Props = $props();
+	let { report: rawReport, music = { tracks: [], plan: [] }, customSfx = {}, trackingToken = null, preview = false, sfxEnabled = true, startAt = null, badge = null, hold = false }: Props = $props();
+
+	// The clock follows the viewer's own timezone (set after mount, so SSR matches hydration)
+	let viewerTz = $state<string | null>(null);
+	const report = $derived(localizeReport(rawReport, viewerTz));
 
 	// Slides plus the client-only outro (Rewatch) screen
 	const slides: (Slide | null)[] = $derived([...report.slides, null]);
@@ -140,9 +146,11 @@
 
 	function onEnter(i: number, cause: NavCause) {
 		const kind = kindOf(i);
-		audio?.play(music.plan[i] ?? null, { restart: cause === 'rewatch' });
-		// once the crossfade is done, load the next slide's track on the idle deck
-		const upcoming = music.plan[i + 1] ?? null;
+		// deferred slides open on the music before them and switch on their cue (musicCue)
+		const deferred = DEFERRED_MUSIC.includes(kind);
+		audio?.play((deferred ? music.plan[i - 1] : music.plan[i]) ?? null, { restart: cause === 'rewatch' });
+		// once the crossfade is done, load the track that comes next on the idle deck
+		const upcoming = (deferred ? music.plan[i] : music.plan[i + 1]) ?? null;
 		window.setTimeout(() => {
 			if (index === i) audio?.prepare(upcoming);
 		}, 1900);
@@ -152,7 +160,26 @@
 		}
 	}
 
+	/** A deferred-music slide reached its cue: crossfade into its own track. */
+	function musicCue(i: number) {
+		if (!started || index !== i) return; // a slide still animating out doesn't get a say
+		audio?.play(music.plan[i] ?? null);
+		const upcoming = music.plan[i + 1] ?? null;
+		window.setTimeout(() => {
+			if (index === i) audio?.prepare(upcoming);
+		}, 1900);
+	}
+
+	/** Per-layer "next" interceptors (see StoryContext.interceptAdvance). */
+	const advanceHandlers = new Map<number, () => boolean>();
+
 	function next(cause: NavCause = 'tap', origin?: { x: number; y: number }) {
+		// the current slide may use a manual "next" to skip to its reveal instead
+		const current = layers[layers.length - 1];
+		if (cause !== 'auto' && !transitioning && current && current.index === index && advanceHandlers.get(current.key)?.()) {
+			if (paused) setPaused(false); // the reveal needs the timelines running
+			return;
+		}
 		go(index + 1, cause, origin);
 	}
 	function prev(cause: NavCause = 'tap', origin?: { x: number; y: number }) {
@@ -174,6 +201,11 @@
 
 	function showNowPlaying(t: MusicTrack) {
 		window.clearTimeout(nowPlayingTimer);
+		// generic (admin-chosen background) music has no label: show nothing for it
+		if (!t.label) {
+			nowPlaying = null;
+			return;
+		}
 		nowPlaying = { label: t.label, n: (nowPlaying?.n ?? 0) + 1 };
 		nowPlayingTimer = window.setTimeout(() => (nowPlaying = null), 5000);
 	}
@@ -298,6 +330,7 @@
 	}
 
 	onMount(() => {
+		viewerTz = viewerTimezone();
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		reducedMotion = mq.matches;
 		const onMq = () => (reducedMotion = mq.matches);
@@ -367,6 +400,9 @@
 							{preview}
 							{sfx}
 							onRewatch={rewatch}
+							onMusicCue={() => musicCue(layer.index)}
+							stopSfx={(name) => audio?.stopSfx(name)}
+							setAdvanceHandler={(h) => (h ? advanceHandlers.set(layer.key, h) : advanceHandlers.delete(layer.key))}
 						/>
 					</div>
 				{/each}

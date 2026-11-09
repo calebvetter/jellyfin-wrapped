@@ -12,7 +12,8 @@
 	let totalEl: HTMLSpanElement;
 
 	const gt = $derived(slide.goodTaste);
-	const hit = $derived(new Set(gt.examples.map((e) => e.key)));
+	// spotlight one title: the pick other people watched most (its music plays here)
+	const hit = $derived(new Set(gt.examples.slice(0, 1).map((e) => e.key)));
 	const shown = $derived(slide.posters.slice(0, 8));
 
 	onMount(() => {

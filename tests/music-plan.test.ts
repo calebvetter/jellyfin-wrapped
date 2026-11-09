@@ -76,4 +76,13 @@ describe('music plan', () => {
 		expect(plan.every((p) => p === null)).toBe(true);
 		expect(tracks).toEqual([]);
 	});
+
+	it('plays the highlighted request’s music on the requests slide, never another poster’s', () => {
+		const prevKind = kinds[kinds.indexOf('requests') - 1];
+		const other = new Map([[key('Glass Harbor', 'movie'), [track(key('Glass Harbor', 'movie'))]]]); // examples[1] / a poster
+		const a = buildMusicPlan(report, other, [track('fb', 'fb')]).plan;
+		expect(at(a, 'requests')).toBe(at(a, prevKind)); // the spotlight has no music: keep what's playing
+		const star = new Map([...other, [key('Paper Comets', 'movie'), [track(key('Paper Comets', 'movie'))]]]);
+		expect(at(buildMusicPlan(report, star).plan, 'requests')).toBe(`t-${key('Paper Comets', 'movie')}`);
+	});
 });

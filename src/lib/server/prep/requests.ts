@@ -27,14 +27,18 @@ export interface RequestTitle {
 	firstRequestedAt: number;
 	keys: string[]; // candidate title keys
 	jellyfinMediaId: string | null;
+	/** Seconds watched by anyone (requester included) since the request, within the range. */
+	seconds: number;
+	/** Of which by other users (Good Taste). */
+	othersSeconds: number;
 }
 
 export interface RequestStats {
 	total: number; // distinct requested titles
 	movies: number;
 	shows: number;
-	titles: RequestTitle[];
-	goodTaste: RequestTitle[];
+	titles: RequestTitle[]; // most watched first
+	goodTaste: RequestTitle[]; // most watched by others first
 	goodTasteViewers: number;
 }
 
@@ -60,16 +64,15 @@ export function requestStats(
 			for (const key of keysFor(r)) if (!existing.keys.includes(key)) existing.keys.push(key);
 			continue;
 		}
-		byTitle.set(k, { mediaType: r.mediaType, tmdbId: r.tmdbId, firstRequestedAt: r.createdAt, keys: keysFor(r), jellyfinMediaId: r.jellyfinMediaId });
+		byTitle.set(k, { mediaType: r.mediaType, tmdbId: r.tmdbId, firstRequestedAt: r.createdAt, keys: keysFor(r), jellyfinMediaId: r.jellyfinMediaId, seconds: 0, othersSeconds: 0 });
 	}
 	const titles = [...byTitle.values()];
 
-	// index other users' views by title key
-	const othersByKey = new Map<string, View[]>();
+	// index everyone's views by title key
+	const viewsByKey = new Map<string, View[]>();
 	for (const v of allViews) {
-		if (v.userId === userId) continue;
-		let l = othersByKey.get(v.titleKey);
-		if (!l) othersByKey.set(v.titleKey, (l = []));
+		let l = viewsByKey.get(v.titleKey);
+		if (!l) viewsByKey.set(v.titleKey, (l = []));
 		l.push(v);
 	}
 	const viewers = new Set<string>();
@@ -77,13 +80,22 @@ export function requestStats(
 	for (const t of titles) {
 		const watchers = new Set<string>();
 		for (const key of t.keys) {
-			for (const v of othersByKey.get(key) ?? []) if (v.start >= t.firstRequestedAt && v.start < range.rangeEnd) watchers.add(v.userId);
+			for (const v of viewsByKey.get(key) ?? []) {
+				if (v.start < t.firstRequestedAt || v.start >= range.rangeEnd) continue;
+				t.seconds += v.seconds;
+				if (v.userId === userId) continue;
+				t.othersSeconds += v.seconds;
+				watchers.add(v.userId);
+			}
 		}
 		if (watchers.size) {
 			goodTaste.push(t);
 			watchers.forEach((w) => viewers.add(w));
 		}
 	}
+	// the slide shows (and plays music for) the most-watched requests
+	titles.sort((a, b) => b.seconds - a.seconds || a.firstRequestedAt - b.firstRequestedAt);
+	goodTaste.sort((a, b) => b.othersSeconds - a.othersSeconds || a.firstRequestedAt - b.firstRequestedAt);
 	return {
 		total: titles.length,
 		movies: titles.filter((t) => t.mediaType === 'movie').length,

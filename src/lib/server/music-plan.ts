@@ -32,7 +32,9 @@ export function slideTitleKeys(slide: Slide): string[] {
 		case 'original':
 			return [slide.title.key];
 		case 'requests':
-			return [...slide.goodTaste.examples, ...slide.posters].map((t) => t.key);
+			// the highlighted title's music, or the current music if it has none (never another
+			// poster's, which wouldn't match what's on screen); without a highlight, the most-watched request
+			return slide.goodTaste.examples.length ? [slide.goodTaste.examples[0].key] : slide.posters.map((t) => t.key);
 		case 'summary':
 			return [slide.topShow?.key, slide.topMovie?.key].filter((k): k is string => Boolean(k));
 		default:
