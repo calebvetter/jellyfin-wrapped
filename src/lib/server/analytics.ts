@@ -7,7 +7,7 @@
  * Admin previews never receive a tracking token, so they are never recorded.
  */
 import { all, get, run, tx } from './db';
-import { sign, tokenHash, verify } from './crypto';
+import { decrypt, encrypt, tokenHash } from './crypto';
 
 export type ViewMode = 'login' | 'link';
 
@@ -21,13 +21,23 @@ interface TrackClaims {
 
 const TOKEN_TTL_MS = 12 * 3_600_000;
 
+/**
+ * Analytics token handed to the story page. Encrypted (AES-GCM, so also tamper-proof) rather
+ * than just signed: share-link pages are public and mustn't reveal the Jellyfin user id.
+ */
 export function issueTrackingToken(userId: string, year: number, mode: ViewMode, slideCount: number): string {
-	return sign({ u: userId, y: year, m: mode, n: slideCount, exp: Date.now() + TOKEN_TTL_MS } satisfies TrackClaims, 'track');
+	return encrypt(JSON.stringify({ t: 'track', u: userId, y: year, m: mode, n: slideCount, exp: Date.now() + TOKEN_TTL_MS }));
 }
 
 export function verifyTrackingToken(token: string): TrackClaims | null {
-	const c = verify<TrackClaims>(token, 'track');
-	if (!c || typeof c.u !== 'string' || typeof c.y !== 'number' || c.exp < Date.now()) return null;
+	if (typeof token !== 'string' || token.length > 4096) return null;
+	let c: (TrackClaims & { t?: string }) | null = null;
+	try {
+		c = JSON.parse(decrypt(token) ?? 'null');
+	} catch {
+		return null;
+	}
+	if (!c || c.t !== 'track' || typeof c.u !== 'string' || typeof c.y !== 'number' || typeof c.exp !== 'number' || c.exp < Date.now()) return null;
 	if (c.m !== 'login' && c.m !== 'link') return null;
 	return c;
 }

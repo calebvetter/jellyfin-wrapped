@@ -5,9 +5,9 @@ import { get } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
 
 /**
- * Passwordless personal link. The token is a bearer credential granting read access to
- * exactly one user's prepared Wrapped — no session, no admin features, no other users.
- * Invalid tokens get a generic 404 and count toward a per-client throttle.
+ * Share link: a public, view-only page of one user's prepared Wrapped. No session, no
+ * settings, no other users, no upstream services. Unknown codes get a generic 404 and count
+ * toward a per-client throttle.
  */
 export const load: PageServerLoad = ({ params, url, getClientAddress, setHeaders }) => {
 	setHeaders({ 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' });

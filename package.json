@@ -21,8 +21,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"screenshots": "node scripts/screenshots.mjs",
-		"doctor": "node scripts/doctor.mjs"
+		"screenshots": "node scripts/screenshots.mjs"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.8",

@@ -3,6 +3,8 @@
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { fmtDate, fmtDuration, fmtMinutes } from '$lib/admin/util';
+	import TimezonePicker from '$lib/admin/TimezonePicker.svelte';
+	import { viewerTimezone } from '$shared/clock';
 
 	let { data, form } = $props();
 
@@ -22,6 +24,14 @@
 	const progressPct = $derived(
 		run ? Math.min(100, ((run.progress.step - 1 + (run.progress.total ? run.progress.done / run.progress.total : 0)) / run.progress.steps) * 100) : 0
 	);
+
+	// the server default timezone; until an admin saves one, start from this browser's zone
+	let tz = $state('');
+	$effect(() => {
+		tz = data.timezone ?? viewerTimezone() ?? 'UTC';
+	});
+	let tzForm: HTMLFormElement | undefined = $state();
+	let tzSaved = $state(false);
 
 	onMount(() => {
 		let wasRunning = false;
@@ -53,7 +63,39 @@
 
 <div class="grid cols-2">
 	<section class="card">
-		<div class="card-head"><h2>Run preparation</h2><span class="muted">Timezone: {data.timezone}</span></div>
+		<div class="card-head"><h2>Run preparation</h2></div>
+		<form
+			method="POST"
+			action="?/timezone"
+			class="row"
+			style="margin-bottom:12px;align-items:flex-start"
+			bind:this={tzForm}
+			use:enhance={() =>
+				async ({ update, result }) => {
+					await update({ reset: false, invalidateAll: false });
+					tzSaved = result.type === 'success';
+				}}
+		>
+			<span class="muted" style="padding-top:9px">Timezone</span>
+			<TimezonePicker
+				bind:value={tz}
+				name="timezone"
+				onchange={() => {
+					tzSaved = false;
+					queueMicrotask(() => tzForm?.requestSubmit());
+				}}
+			/>
+			{#if tzSaved}<span class="badge ok" style="margin-top:6px">saved</span>{/if}
+		</form>
+		<p class="muted" style="margin:-4px 0 14px">
+			For days, streaks and year boundaries.
+			{#if data.userOverrides.length}
+				Own timezone:
+				{data.userOverrides.map((u) => `${u.name} (${u.timezone})`).join(', ')}.
+			{:else}
+				Users can have their own on the <a href="/admin/users">Users</a> page.
+			{/if}
+		</p>
 		<form
 			method="POST"
 			action="?/prepare"
@@ -68,6 +110,7 @@
 				};
 			}}
 		>
+			<input type="hidden" name="timezone" value={tz} />
 			<label class="row">
 				<span class="muted">Year</span>
 				<select name="year" bind:value={year}>
@@ -81,7 +124,7 @@
 		{/if}
 		{#if data.totalUsers}
 			<p class="muted" style="margin:6px 0 0">
-				Wrappeds (and personal links) will be prepared for <strong>{data.selectedUsers}</strong> of {data.totalUsers} users —
+				Wrappeds (and links) will be prepared for <strong>{data.selectedUsers}</strong> of {data.totalUsers} users —
 				<a href="/admin/users">choose who on the Users page</a>.
 			</p>
 		{/if}
@@ -128,7 +171,7 @@
 		{/if}
 
 		<div class="card-head" style="margin-top:22px"><h2>Featured year</h2></div>
-		<p class="muted" style="margin-top:0">Users and personal links open this year by default.</p>
+		<p class="muted" style="margin-top:0">Sign-ins and links open this year by default.</p>
 		<form method="POST" action="?/feature" class="row" use:enhance>
 			<select name="year">
 				<option value="">Newest prepared year{data.featured ? ` (${data.years[0]})` : ''}</option>

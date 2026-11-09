@@ -17,6 +17,9 @@ describe('engagement tracking', () => {
 		const t = issueTrackingToken('u1', 2026, 'link', 15);
 		expect(verifyTrackingToken(t)).toMatchObject({ u: 'u1', y: 2026, m: 'link', n: 15 });
 		expect(verifyTrackingToken(t + 'x')).toBeNull();
+		// public share-link pages carry this token: it must not reveal the Jellyfin user id
+		const decoded = t.split('.').map((p) => Buffer.from(p, 'base64url').toString('latin1')).join('');
+		expect(t + decoded).not.toContain('u1');
 	});
 
 	it('rejects batches without a valid token (e.g. admin previews get none)', () => {

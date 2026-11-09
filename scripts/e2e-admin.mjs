@@ -2,7 +2,7 @@
 /**
  * End-to-end smoke test against a running dev server wired to scripts/fake-upstreams.mjs.
  * Signs in as admin, prepares the current year, waits for completion, visits every admin
- * page, checks the personal links preparation created, opens one anonymously and plays a
+ * page, checks the share links preparation created, opens one anonymously and plays a
  * few slides (which records analytics), exercises the soundtrack, generic music and sound
  * effects tools, then screenshots everything into screenshots/e2e-*.png.
  *
@@ -19,7 +19,7 @@ const pass = opt('pass', 'alice');
 fs.mkdirSync('screenshots', { recursive: true });
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 }, timezoneId: 'America/Chicago', permissions: ['clipboard-read', 'clipboard-write'] });
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -51,9 +51,23 @@ async function prepare() {
 	console.log(`✓ preparation #${prevId + 1} finished: ${run?.progress.status} in ~${((Date.now() - t0) / 1000).toFixed(0)}s`);
 	return { status: run?.progress.status ?? 'running', log: run?.log ?? [] };
 }
+// the first admin visit saves the admin's browser zone as the default (before any Prepare)
+await page.goto(`${base}/admin`);
+await page.waitForTimeout(800);
+{
+	const r = await (await page.request.post(`${base}/api/admin/timezone`, { data: { timezone: 'Asia/Tokyo' }, headers: { Origin: base } })).json();
+	console.log(`✓ default timezone saved on first visit: ${r.timezone} (not overwritten: ${!r.saved})`);
+	if (r.timezone !== 'America/Chicago' || r.saved) process.exitCode = 1;
+}
+const tzValue = () => page.locator('input[type=hidden][name=timezone]').first().inputValue();
+const tzBefore = await tzValue();
 const prep1 = await prepare();
 const status = prep1.status;
-console.log('  ' + prep1.log.filter((l) => /Preparing Wrappeds for|personal link/.test(l)).join(' · '));
+await page.reload();
+const tzAfter = await tzValue();
+console.log(`✓ default timezone: browser ${tzBefore} → saved ${tzAfter}`);
+if (tzBefore !== 'America/Chicago' || tzAfter !== 'America/Chicago') process.exitCode = 1;
+console.log('  ' + prep1.log.filter((l) => /Preparing Wrappeds for|share link/.test(l)).join(' · '));
 await page.waitForTimeout(1500);
 await page.reload();
 await page.locator('details summary').first().click().catch(() => {});
@@ -63,12 +77,26 @@ if (!/ready/i.test(status)) {
 	process.exitCode = 1;
 }
 
-// 3. users: every prepared user got a personal link (green "Copy link" button)
+// 3. users: every prepared user got a share link (green "Copy link" button)
 await page.goto(`${base}/admin/users`);
 const rows = await page.locator('tbody tr').count();
 const copies = await page.locator('tbody tr button:has-text("Copy link")').count();
 console.log(`✓ users page: ${copies} of ${rows} users have a "Copy link" button`);
 if (!copies) process.exitCode = 1;
+// "Copy email" puts a rich HTML email with the share link and hosted images on the clipboard
+{
+	await page.locator('tbody tr button:has-text("Copy email")').first().click();
+	await page.waitForSelector('text=/Email for .* copied/');
+	const mail = await page.evaluate(async () => {
+		const [item] = await navigator.clipboard.read();
+		return item.types.includes('text/html') ? await (await item.getType('text/html')).text() : '';
+	});
+	const ok = /\/w\/[A-Za-z0-9_-]+/.test(mail) && mail.includes('/email/banner.jpg');
+	const img = await page.request.get(`${base}/email/banner.jpg`);
+	console.log(`✓ copy email: ${ok ? 'HTML with link + images' : 'MISSING content'}, banner served ${img.status()}`);
+	if (!ok || img.status() !== 200) process.exitCode = 1;
+	await shot('users-email');
+}
 await shot('users');
 
 // 3b. uncheck the last user → the next preparation skips them; then check everyone again
@@ -95,16 +123,56 @@ await shot('users');
 	if (checked !== rows) process.exitCode = 1;
 }
 
+// 3c. a per-user timezone override is saved and used by the next preparation
+{
+	await page.goto(`${base}/admin/users`);
+	const href = await page.locator('tbody tr a').first().getAttribute('href');
+	await page.goto(base + href);
+	// combobox: open it, type to filter, Enter picks the top match
+	const pickZone = async (q) => {
+		await page.click('button[aria-haspopup=listbox]');
+		await page.fill('input[aria-label="Search timezones"]', q);
+		await page.press('input[aria-label="Search timezones"]', 'Enter');
+	};
+	await pickZone('manila');
+	await page.waitForSelector('text=saved');
+	await page.reload();
+	const saved = await tzValue();
+	const prep3 = await prepare();
+	const zones = prep3.log.find((l) => l.includes('Range ')) ?? '';
+	await page.goto(base + href);
+	const note = await page.locator('text=/^Prepared in /').innerText().catch(() => '(no note)');
+	console.log(`✓ user override: saved ${saved}; run "${zones.replace(/^.*\(/, '(')}"; ${note}`);
+	if (saved !== 'Asia/Manila' || !zones.includes('2 timezones') || !note.includes('Asia/Manila')) process.exitCode = 1;
+	await shot('user-timezone');
+	await page.click('button[aria-haspopup=listbox]');
+	await page.click('li[role=option]:has-text("Default")');
+	await page.waitForTimeout(800);
+	await page.reload();
+	if ((await tzValue()) !== '') process.exitCode = 1;
+	console.log('✓ override cleared (back to the default)');
+	await page.goto(`${base}/admin/users`);
+}
+
 const firstUser = page.locator('tbody tr a').first();
 const href = await firstUser.getAttribute('href');
 await page.goto(base + href);
 await shot('user-detail');
 
-// 4. the personal link was created during preparation
-const linkInput = page.locator('input.link-url');
-await linkInput.waitFor({ timeout: 5000 });
-const link = await linkInput.inputValue();
-console.log('✓ personal link created by preparation:', link.replace(/\/w\/.+/, '/w/[token]'));
+// 4. the share link was created during preparation: short (8 chars) and copyable
+await page.click('button:has-text("Copy link")');
+await page.waitForTimeout(300);
+const link = await page.evaluate(() => navigator.clipboard.readText());
+const code = link.split('/w/')[1] ?? '';
+console.log(`✓ share link created by preparation: /w/<${code.length} chars>`);
+if (!/^[A-Za-z0-9]{8}$/.test(code)) process.exitCode = 1;
+// the link page carries no Jellyfin account id
+{
+	const html = await (await page.request.get(link, { headers: { Cookie: '' } })).text();
+	const id = href.split('/').pop();
+	console.log(`✓ link page ${html.includes(id) ? 'LEAKS' : 'omits'} the Jellyfin user id`);
+	if (html.includes(id)) process.exitCode = 1;
+}
 
 // 5. open link anonymously, play through a few slides (records analytics)
 const anon = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -122,11 +190,11 @@ await ap.keyboard.press('ArrowRight'); // navigation flush (throttled to 8 s)
 await ap.waitForTimeout(1500);
 await ap.close();
 await anon.close();
-console.log('✓ personal link played anonymously');
+console.log('✓ share link played anonymously');
 
 // invalid token → 404
 const bad = await (await browser.newContext()).newPage();
-const r = await bad.goto(`${base}/w/${'A'.repeat(43)}`);
+const r = await bad.goto(`${base}/w/Abcdefgh`);
 console.log(`✓ bogus token → HTTP ${r.status()}`);
 
 // 6. soundtracks: album covers are cached locally (CSP img-src 'self'); preview a track

@@ -3,7 +3,8 @@
  *  - admin:        /admin/**, /api/admin/**        (Jellyfin administrators only)
  *  - user:         /wrapped                         (any signed-in Jellyfin user)
  *  - link:         /w/<token>                       (bearer token; no session needed)
- *  - public-asset: /art/**, /audio/**, /_app/**      (non-sensitive, cacheable media)
+ *  - public-asset: /art/**, /audio/**, /_app/**, /email/** (non-sensitive, cacheable media;
+ *                  /email/* are the images in pasted "Wrapped is ready" emails)
  *  - public:       everything else (login page, health, events endpoint)
  */
 export type AccessPolicy = 'admin' | 'user' | 'link' | 'public-asset' | 'public';
@@ -12,7 +13,7 @@ export function accessPolicy(path: string): AccessPolicy {
 	if (path === '/admin' || path.startsWith('/admin/') || path.startsWith('/api/admin/')) return 'admin';
 	if (path === '/wrapped' || path.startsWith('/wrapped/')) return 'user';
 	if (path.startsWith('/w/')) return 'link';
-	if (path.startsWith('/art/') || path.startsWith('/audio/') || path.startsWith('/_app/') || path === '/favicon.svg' || path === '/robots.txt') return 'public-asset';
+	if (path.startsWith('/art/') || path.startsWith('/audio/') || path.startsWith('/_app/') || path.startsWith('/email/') || path === '/favicon.svg' || path === '/robots.txt') return 'public-asset';
 	return 'public';
 }
 

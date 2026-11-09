@@ -87,7 +87,7 @@
 }
 
 .admin .grid.cols-2 {
-	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
 }
 
 .admin .stats {
@@ -296,24 +296,24 @@
 	flex-wrap: wrap;
 }
 
-.admin .link-url {
-	flex: 1;
-	min-width: 220px;
-	padding: 8px 12px;
+.admin .link-field {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	margin: 0 0 12px;
+	padding: 9px 12px;
 	border-radius: 10px;
 	background: var(--bg);
 	border: 1px solid var(--line);
-	overflow: hidden;
+	color: var(--text);
+	font-size: 13px;
 	text-overflow: ellipsis;
-	white-space: nowrap;
-	filter: blur(4px);
-	transition: filter 0.2s;
-	user-select: all;
+	cursor: text;
 }
 
-.admin .link-url:hover,
-.admin .link-url:focus {
-	filter: none;
+.admin .link-field:focus {
+	outline: none;
+	border-color: rgba(198, 244, 50, 0.5);
 }
 
 .admin .bar-cell {
@@ -342,4 +342,13 @@
 .admin input[type='checkbox'],
 .admin input[type='range'] {
 	accent-color: var(--accent);
+}
+
+/* Phones: any wide table scrolls sideways on its own instead of widening the page */
+@media (max-width: 640px) {
+	.admin table {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+	}
 }

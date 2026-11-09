@@ -59,6 +59,15 @@ export function utcOffsetMs(ts: number, tz: string): number {
 	return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - at;
 }
 
+/** The runtime's canonical spelling of an IANA zone ("america/chicago" → "America/Chicago"), or null if unknown. */
+export function canonicalTimezone(tz: string): string | null {
+	try {
+		return new Intl.DateTimeFormat('en-US', { timeZone: tz.trim() }).resolvedOptions().timeZone;
+	} catch {
+		return null;
+	}
+}
+
 /** True if the browser/runtime knows this IANA zone. */
 export function isValidTimezone(tz: string): boolean {
 	try {

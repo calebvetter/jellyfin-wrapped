@@ -4,7 +4,7 @@
 	import type { Slide, WrappedReport } from '$shared/report';
 	import { SLIDE_LABELS } from '$shared/report';
 	import { SLIDE_DURATION } from '$shared/timing';
-	import type { MusicPlan, MusicTrack } from '$shared/music';
+	import { GENERIC_KEY, type MusicPlan, type MusicTrack } from '$shared/music';
 	import type { CustomSfx } from '$shared/sfx';
 	import { localizeReport, viewerTimezone } from '$shared/clock';
 	import { AudioDirector } from './audio';
@@ -144,13 +144,30 @@
 		}
 	}
 
+	const trackById = $derived(new Map(music.tracks.map((t) => [t.id, t])));
+
+	/**
+	 * The track a slide opens on. Deferred slides (top shows/movies) hold their own track back
+	 * until their cue and open on the latest generic track before them, which resumes where it
+	 * left off, so the #1 show's music doesn't spill into the movies' build-up. Without
+	 * generic music they carry on the previous slide's music.
+	 */
+	function openingTrack(i: number): string | null {
+		if (!DEFERRED_MUSIC.includes(kindOf(i))) return music.plan[i] ?? null;
+		for (let j = i - 1; j >= 0; j--) {
+			const id = music.plan[j];
+			if (id && trackById.get(id)?.titleKey === GENERIC_KEY) return id;
+		}
+		return music.plan[i - 1] ?? null;
+	}
+
 	function onEnter(i: number, cause: NavCause) {
 		const kind = kindOf(i);
-		// deferred slides open on the music before them and switch on their cue (musicCue)
+		// deferred slides switch to their own track on their cue (musicCue)
 		const deferred = DEFERRED_MUSIC.includes(kind);
-		audio?.play((deferred ? music.plan[i - 1] : music.plan[i]) ?? null, { restart: cause === 'rewatch' });
+		audio?.play(openingTrack(i), { restart: cause === 'rewatch' });
 		// once the crossfade is done, load the track that comes next on the idle deck
-		const upcoming = (deferred ? music.plan[i] : music.plan[i + 1]) ?? null;
+		const upcoming = deferred ? (music.plan[i] ?? null) : openingTrack(i + 1);
 		window.setTimeout(() => {
 			if (index === i) audio?.prepare(upcoming);
 		}, 1900);
@@ -164,7 +181,7 @@
 	function musicCue(i: number) {
 		if (!started || index !== i) return; // a slide still animating out doesn't get a say
 		audio?.play(music.plan[i] ?? null);
-		const upcoming = music.plan[i + 1] ?? null;
+		const upcoming = openingTrack(i + 1);
 		window.setTimeout(() => {
 			if (index === i) audio?.prepare(upcoming);
 		}, 1900);

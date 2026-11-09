@@ -5,11 +5,12 @@
  * untouched. Only one run executes at a time.
  */
 import { all, get, run, tx } from '../db';
-import { config, configProblems, seerrEnabled } from '../config';
+import { configProblems, seerrEnabled } from '../config';
+import { defaultTimezone, timezoneFor } from '../timezone';
 import * as jf from '../integrations/jellyfin';
 import * as js from '../integrations/jellystat';
 import * as seerr from '../integrations/seerr';
-import { buildViews } from './normalize';
+import { buildViews, restrictToRange } from './normalize';
 import { resolveMetadata, tmdbDetails, tmdbPoster, type PlaybackHint } from './resolve';
 import { buildReport, titleRef, type UserRequestSummary } from './report';
 import { normId, requestStats, type NormalizedRequest } from './requests';
@@ -57,7 +58,7 @@ export function recoverInterruptedRuns() {
 	run(`DELETE FROM reports WHERE dataset_id IN (SELECT id FROM datasets WHERE status IN ('failed','cancelled'))`);
 }
 
-export function preparationRange(year: number, now = Date.now(), tz = config().timezone) {
+export function preparationRange(year: number, now = Date.now(), tz = defaultTimezone()) {
 	const rangeStart = yearStart(year, tz);
 	const nextYear = yearStart(year + 1, tz);
 	const yearToDate = now < nextYear;
@@ -67,13 +68,19 @@ export function preparationRange(year: number, now = Date.now(), tz = config().t
 
 export function startPreparation(year: number, startedBy: string | null): { ok: true; datasetId: number } | { ok: false; error: string } {
 	if (current?.progress.status === 'running') return { ok: false, error: 'A preparation is already running' };
-	const nowYear = new Date(toLocal(Date.now(), config().timezone)).getUTCFullYear();
+	const tz = defaultTimezone();
+	const nowYear = new Date(toLocal(Date.now(), tz)).getUTCFullYear();
 	if (!Number.isInteger(year) || year < 2000 || year > nowYear) return { ok: false, error: 'Invalid year' };
 	const problems = configProblems().filter((p) => !p.startsWith('SEERR') && !p.startsWith('APP_SECRET'));
 	if (problems.length) return { ok: false, error: problems.join('; ') };
 
-	const tz = config().timezone;
-	const { rangeStart, rangeEnd, yearToDate } = preparationRange(year);
+	// each included user's year runs in their own timezone; the run covers all of them
+	const now = Date.now();
+	const zones = new Set([tz, ...all<{ id: string }>('SELECT id FROM users WHERE included = 1').map((u) => timezoneFor(u.id))]);
+	const ranges = [...zones].map((z) => preparationRange(year, now, z));
+	const rangeStart = Math.min(...ranges.map((r) => r.rangeStart));
+	const rangeEnd = Math.max(...ranges.map((r) => r.rangeEnd));
+	const yearToDate = ranges.some((r) => r.yearToDate);
 	const info = run(
 		`INSERT INTO datasets (year, status, started_at, range_start, range_end, timezone, started_by) VALUES (?, 'running', ?, ?, ?, ?, ?)`,
 		year,
@@ -90,7 +97,7 @@ export function startPreparation(year: number, startedBy: string | null): { ok: 
 		cancel: false
 	};
 	const state = current;
-	void execute(state, { datasetId, year, rangeStart, rangeEnd, yearToDate, tz });
+	void execute(state, { datasetId, year, rangeStart, rangeEnd, yearToDate, tz, now, zones: zones.size });
 	return { ok: true, datasetId };
 }
 
@@ -100,7 +107,11 @@ interface RunParams {
 	rangeStart: number;
 	rangeEnd: number;
 	yearToDate: boolean;
+	/** The admin's default timezone (users may have their own). */
 	tz: string;
+	/** "Now" for year-to-date ranges, shared by every user in the run. */
+	now: number;
+	zones: number;
 }
 
 async function execute(state: NonNullable<typeof current>, p: RunParams) {
@@ -136,7 +147,7 @@ async function execute(state: NonNullable<typeof current>, p: RunParams) {
 
 	try {
 		step(0);
-		log(`Range ${new Date(p.rangeStart).toISOString()} → ${new Date(p.rangeEnd).toISOString()} (${p.tz}${p.yearToDate ? ', year to date' : ''})`);
+		log(`Range ${new Date(p.rangeStart).toISOString()} → ${new Date(p.rangeEnd).toISOString()} (default ${p.tz}${p.zones > 1 ? `, ${p.zones} timezones in use` : ''}${p.yearToDate ? ', year to date' : ''})`);
 		if (!seerrEnabled()) warnings.push('Seerr is not configured: request slides and TMDb popularity are unavailable');
 
 		// ---- users
@@ -284,10 +295,13 @@ async function execute(state: NonNullable<typeof current>, p: RunParams) {
 		const completenessUsers: Record<string, { slides: number; minutes: number; reason?: string }> = {};
 		for (const u of userRows) {
 			progress(built, userRows.length, `Building reports (${u.name})`);
-			const userViews = viewsByUser.get(u.id) ?? [];
+			// this user's year, in their own timezone
+			const tz = timezoneFor(u.id);
+			const range = preparationRange(p.year, p.now, tz);
+			const userViews = restrictToRange(viewsByUser.get(u.id) ?? [], range);
 			let reqSummary: UserRequestSummary | null = null;
 			if (seerrEnabled() && requests.length) {
-				const rs = requestStats(u.id, requests, views, p, keysFor);
+				const rs = requestStats(u.id, requests, views, range, keysFor);
 				if (rs.total) {
 					const toRef = async (t: (typeof rs.titles)[number]) => {
 						const key = t.keys.find((k) => resolved.titles.has(k));
@@ -320,9 +334,9 @@ async function execute(state: NonNullable<typeof current>, p: RunParams) {
 				userId: u.id,
 				userName: u.name,
 				year: p.year,
-				yearToDate: p.yearToDate,
+				yearToDate: range.yearToDate,
 				views: userViews,
-				ctx: { tz: p.tz, rangeStart: p.rangeStart, rangeEnd: p.rangeEnd, titles: resolved.titles },
+				ctx: { tz, rangeStart: range.rangeStart, rangeEnd: range.rangeEnd, titles: resolved.titles },
 				serverPopularity,
 				requests: reqSummary
 			});
@@ -405,7 +419,7 @@ async function execute(state: NonNullable<typeof current>, p: RunParams) {
 		state.progress.status = 'ready';
 		log(`Dataset #${p.datasetId} is now live for ${p.year}`);
 
-		// Personal links for everyone who got a Wrapped (existing links are kept as they are)
+		// Share links for everyone who got a Wrapped (existing links are kept as they are)
 		let newLinks = 0;
 		for (const r of all<{ user_id: string }>('SELECT user_id FROM reports WHERE dataset_id = ?', p.datasetId)) {
 			if (!activeLinkForUser(r.user_id)) {
@@ -413,7 +427,7 @@ async function execute(state: NonNullable<typeof current>, p: RunParams) {
 				newLinks++;
 			}
 		}
-		if (newLinks) log(`Created ${newLinks} personal link${newLinks === 1 ? '' : 's'}`);
+		if (newLinks) log(`Created ${newLinks} share link${newLinks === 1 ? '' : 's'}`);
 	} catch (e) {
 		const cancelled = e instanceof Cancelled;
 		const message = (e as Error).message || String(e);

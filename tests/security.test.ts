@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openDatabase, _setDbForTests, get } from '../src/lib/server/db';
+import { openDatabase, _setDbForTests, get, run } from '../src/lib/server/db';
 import { _setSecretForTests, decrypt, encrypt, randomToken, sign, tokenHash, verify } from '../src/lib/server/crypto';
 import {
 	createLink,
@@ -9,6 +9,7 @@ import {
 	revokeLink,
 	activeLinkForUser,
 	linkToken,
+	shortenLegacyLinks,
 	MAX_FAILURES,
 	_resetThrottleForTests
 } from '../src/lib/server/links';
@@ -52,10 +53,38 @@ describe('crypto primitives', () => {
 	});
 });
 
-describe('personal links', () => {
+describe('share links', () => {
 	it('resolves only to the linked user', () => {
 		const { token } = createLink('user-a', 'admin');
 		expect(resolveLinkToken(token)?.userId).toBe('user-a');
+	});
+
+	it('uses short codes without look-alike characters', () => {
+		const codes = Array.from({ length: 200 }, () => createLink(`u${Math.random()}`, null).token);
+		for (const c of codes) expect(c).toMatch(/^[a-km-zA-HJ-NP-Z2-9]{8}$/);
+		expect(new Set(codes).size).toBe(codes.length);
+	});
+
+	it('gives users with an old long link a short one, keeping the old link working', () => {
+		const long = 'L'.repeat(43);
+		run(
+			'INSERT INTO links (id, token_hash, token_enc, user_id, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+			'legacy1',
+			tokenHash(long, 'link'),
+			encrypt(long),
+			'user-old',
+			1,
+			'admin'
+		);
+		expect(shortenLegacyLinks()).toBe(1);
+		expect(shortenLegacyLinks()).toBe(0); // only once
+		const current = linkToken(activeLinkForUser('user-old')!)!;
+		expect(current).toHaveLength(8);
+		expect(resolveLinkToken(current)?.userId).toBe('user-old');
+		expect(resolveLinkToken(long)?.userId).toBe('user-old');
+		createLink('user-old', 'admin'); // a new link ends both
+		expect(resolveLinkToken(long)).toBeNull();
+		expect(resolveLinkToken(current)).toBeNull();
 	});
 
 	it('stores only a hash and an encrypted copy of the token', () => {
@@ -84,6 +113,8 @@ describe('personal links', () => {
 		expect(resolveLinkToken('')).toBeNull();
 		expect(resolveLinkToken('../../etc/passwd')).toBeNull();
 		expect(resolveLinkToken('A'.repeat(43))).toBeNull();
+		expect(resolveLinkToken('Abcdefgh')).toBeNull();
+		expect(resolveLinkToken('Abcdefg')).toBeNull();
 		expect(resolveLinkToken('A'.repeat(44))).toBeNull();
 	});
 

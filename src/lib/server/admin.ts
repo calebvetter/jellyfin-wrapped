@@ -69,10 +69,12 @@ export interface UserRow {
 	synced_at: number;
 	/** 1 = gets a Wrapped when the admin prepares a year (checkbox on the Users page). */
 	included: number;
+	/** Preparation timezone; null = the admin's default. */
+	timezone: string | null;
 }
 
 export function listUserRows(): UserRow[] {
-	return all<UserRow>('SELECT id, name, is_admin, is_disabled, last_activity, synced_at, included FROM users ORDER BY name COLLATE NOCASE');
+	return all<UserRow>('SELECT id, name, is_admin, is_disabled, last_activity, synced_at, included, timezone FROM users ORDER BY name COLLATE NOCASE');
 }
 
 /** Choose which users get a Wrapped on the next preparation. */

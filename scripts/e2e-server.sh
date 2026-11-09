@@ -7,5 +7,5 @@ export JELLYFIN_URL=http://localhost:8099/jellyfin JELLYFIN_API_KEY=fake-jellyfi
 export JELLYSTAT_URL=http://localhost:8099/jellystat JELLYSTAT_API_KEY=fake-jellystat-key
 export SEERR_URL=http://localhost:8099/seerr SEERR_API_KEY=fake-seerr-key
 export DEEZER_API_URL=http://localhost:8099/deezer
-export APP_SECRET=e2e-only-secret-0123456789abcdef0123 WRAPPED_TIMEZONE=America/Chicago BODY_SIZE_LIMIT=16M
+export APP_SECRET=e2e-only-secret-0123456789abcdef0123 BODY_SIZE_LIMIT=16M
 exec node build/index.js

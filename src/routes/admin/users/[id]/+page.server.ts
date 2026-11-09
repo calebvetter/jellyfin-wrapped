@@ -5,6 +5,7 @@ import { engagementByUser, recentVisits, userSlideEngagement } from '$lib/server
 import { createLink, revokeUserLinks } from '$lib/server/links';
 import { userLink } from '$lib/server/admin';
 import type { UserRow } from '$lib/server/admin';
+import { defaultTimezone, setUserTimezone, userTimezone } from '$lib/server/timezone';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ params, url }) => {
@@ -19,6 +20,9 @@ export const load: PageServerLoad = ({ params, url }) => {
 		years,
 		year,
 		slides: report?.slides.map((s) => s.kind) ?? [],
+		timezone: userTimezone(user.id), // null = the default
+		defaultTimezone: defaultTimezone(),
+		preparedIn: report?.timezone ?? null,
 		stats: year ? statsFor(user.id, year) : null,
 		link: userLink(user.id, url.origin),
 		engagement: year ? (engagementByUser(year).find((e) => e.user_id === user.id) ?? null) : null,
@@ -33,6 +37,14 @@ export const actions: Actions = {
 		if (!exists) return fail(404, { error: 'User not found' });
 		const { token } = createLink(params.id, locals.user?.name ?? null);
 		return { linkUrl: `${url.origin}/w/${token}` };
+	},
+	timezone: async ({ params, request }) => {
+		const tz = String((await request.formData()).get('timezone') ?? '').trim();
+		try {
+			return { timezoneSaved: setUserTimezone(params.id, tz || null) ?? '' };
+		} catch {
+			return fail(400, { error: `Unknown timezone "${tz}"` });
+		}
 	},
 	revoke: async ({ params }) => {
 		const n = revokeUserLinks(params.id);

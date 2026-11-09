@@ -5,6 +5,7 @@ import { resolveSession, SESSION_COOKIE } from '$lib/server/auth/session';
 import { getDb } from '$lib/server/db';
 import { recoverInterruptedRuns } from '$lib/server/prep/runner';
 import { cleanupOrphanAudio } from '$lib/server/soundtrack';
+import { shortenLegacyLinks } from '$lib/server/links';
 import { randomId } from '$lib/server/crypto';
 import { redactPath, accessPolicy } from '$lib/server/auth/guard';
 import { config, configProblems } from '$lib/server/config';
@@ -13,9 +14,15 @@ if (!building) {
 	getDb();
 	recoverInterruptedRuns();
 	cleanupOrphanAudio();
+	try {
+		const n = shortenLegacyLinks();
+		if (n) console.log(`[startup] gave ${n} users a short link (their old links still work)`);
+	} catch (e) {
+		console.warn(`[startup] couldn't shorten old links: ${(e as Error).message}`);
+	}
 	const problems = configProblems();
 	if (problems.length) console.warn(`[config] ${problems.join(' | ')}`);
-	console.log(`[startup] data dir ${config().dataDir}, timezone ${config().timezone}, mock preview ${config().mockPreview ? 'on' : 'off'}`);
+	console.log(`[startup] data dir ${config().dataDir}, mock preview ${config().mockPreview ? 'on' : 'off'}`);
 }
 
 const SECURITY_HEADERS: Record<string, string> = {

@@ -1,8 +1,24 @@
 <script lang="ts">
 	import '$lib/admin/admin.css';
 	import { page } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
+	import { viewerTimezone } from '$shared/clock';
 
 	let { data, children } = $props();
+
+	// First admin visit: make this browser's timezone the default (the server would
+	// otherwise fall back to UTC), so the dashboard and every user's "Default" agree.
+	let tzInit = false;
+	$effect(() => {
+		if (data.timezoneSaved || tzInit) return;
+		const timezone = viewerTimezone();
+		if (!timezone) return;
+		tzInit = true;
+		fetch('/api/admin/timezone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ timezone }) })
+			.then((r) => (r.ok ? r.json() : null))
+			.then((r) => r?.saved && invalidateAll())
+			.catch(() => {});
+	});
 
 	const nav = [
 		{ href: '/admin', label: 'Preparation', icon: 'M4 12h4l3-8 4 16 3-8h2' },
@@ -50,12 +66,13 @@
 <style>
 	.shell {
 		display: grid;
-		grid-template-columns: 1fr;
+		/* minmax(0, …): wide tables and logs scroll inside their cards instead of widening the page */
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	@media (min-width: 960px) {
 		.shell {
-			grid-template-columns: 240px 1fr;
+			grid-template-columns: 240px minmax(0, 1fr);
 		}
 	}
 

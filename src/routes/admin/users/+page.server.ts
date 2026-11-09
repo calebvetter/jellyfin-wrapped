@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { listUserRows, syncUsers, userLink } from '$lib/server/admin';
 import { featuredYear, reportSummaries } from '$lib/server/reports';
 import { engagementByUser } from '$lib/server/analytics';
+import { defaultTimezone } from '$lib/server/timezone';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ url }) => {
@@ -10,11 +11,12 @@ export const load: PageServerLoad = ({ url }) => {
 	const engagement = year ? Object.fromEntries(engagementByUser(year).map((e) => [e.user_id, e])) : {};
 	return {
 		year,
+		defaultTimezone: defaultTimezone(),
 		users: listUserRows().map((u) => ({
 			...u,
 			report: reports[u.id] ?? null,
 			engagement: engagement[u.id] ?? null,
-			// personal links are created automatically when Wrappeds are prepared
+			// links are created automatically when Wrappeds are prepared
 			linkUrl: userLink(u.id, url.origin)?.url ?? null
 		}))
 	};

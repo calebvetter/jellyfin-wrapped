@@ -34,7 +34,6 @@ export interface AppConfig {
 	deezer: { enabled: boolean; url: string };
 	appSecret: string;
 	dataDir: string;
-	timezone: string;
 	mockPreview: boolean;
 	cookieSecure: 'auto' | boolean;
 	sessionTtlHours: number;
@@ -53,23 +52,12 @@ export function config(): AppConfig {
 		deezer: { enabled: bool('DEEZER_ENABLED', true), url: url('DEEZER_API_URL') || 'https://api.deezer.com' },
 		appSecret: str('APP_SECRET'),
 		dataDir: path.resolve(str('DATA_DIR', dev ? './data' : '/data')),
-		timezone: resolveTimezone(str('WRAPPED_TIMEZONE') || str('TZ') || 'UTC'),
 		mockPreview: bool('MOCK_PREVIEW', dev),
 		cookieSecure: secureRaw === 'auto' ? 'auto' : ['1', 'true', 'yes'].includes(secureRaw),
 		sessionTtlHours: num('SESSION_TTL_HOURS', 24 * 14),
 		dev
 	};
 	return cached;
-}
-
-function resolveTimezone(tz: string): string {
-	try {
-		new Intl.DateTimeFormat('en-US', { timeZone: tz });
-		return tz;
-	} catch {
-		console.warn(`[config] Invalid timezone "${tz}", falling back to UTC`);
-		return 'UTC';
-	}
 }
 
 /** Human-readable list of configuration problems (shown in admin + /api/health detail). */

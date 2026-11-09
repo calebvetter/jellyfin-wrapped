@@ -1,7 +1,7 @@
 /**
  * SQLite persistence (Node's built-in `node:sqlite`, no native build step).
  * One file in DATA_DIR holds sessions, prepared datasets, cached metadata,
- * personal links, analytics and soundtrack assignments.
+ * share links, analytics and soundtrack assignments.
  */
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import fs from 'node:fs';

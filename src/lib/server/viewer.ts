@@ -1,4 +1,4 @@
-/** Shared loader for the story experience (login, personal link and admin preview). */
+/** Shared loader for the story experience (sign-in, share link and admin preview). */
 import { issueTrackingToken, type ViewMode } from './analytics';
 import { customSfx, musicFor } from './soundtrack';
 import type { CustomSfx, SfxName } from '$shared/sfx';
@@ -30,7 +30,9 @@ export function loadExperience(userId: string, userName: string, requestedYear: 
 	const wanted = Number(requestedYear);
 	const featured = featuredYear();
 	const year = years.includes(wanted) ? wanted : featured && years.includes(featured) ? featured : (years[0] ?? featured);
-	const report = year ? reportFor(userId, year) : null;
+	const found = year ? reportFor(userId, year) : null;
+	// shared links are public: the page needs nothing that identifies the Jellyfin account
+	const report = found && mode === 'link' ? { ...found, userId: '' } : found;
 	return {
 		report,
 		years,

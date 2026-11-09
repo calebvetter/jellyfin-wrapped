@@ -78,16 +78,21 @@ The pipeline is orchestrated by `prep/runner.ts`. Only one run executes at a tim
 7. Publish atomically: in one transaction, point `active_datasets(year)` at the new dataset, mark the old one `superseded` and delete its reports.
    - If the run fails or is cancelled, the new dataset's reports are deleted and the live dataset is untouched.
    - Runs interrupted by a restart are marked failed on boot.
-8. After publishing, every user with a report who has no active personal link gets one (`createLink`), so links are never a separate step. Existing links are kept.
+8. After publishing, every user with a report who has no active share link gets one (`createLink`), so links are never a separate step. Existing links are kept.
 
 The range is local Jan 1 → local Jan 1 of the next year, or → now for the current year (year to date). Timezone handling is in `prep/time.ts`: Intl-based, with offsets cached per UTC hour.
 
-**Viewer-timezone clock** (`$shared/clock.ts`): everything is prepared in `WRAPPED_TIMEZONE`, except that the time-of-day stats follow whoever is watching.
+**Preparation timezones** (`server/timezone.ts`; there is no env setting):
+- **Default:** `settings.timezone`, chosen on the admin dashboard. `lib/admin/TimezonePicker.svelte` is a shadcn-style combobox with no dependency: a button shows the selection, and a popover holds an empty search box over all of `Intl.supportedValuesOf('timeZone')` with current UTC offsets. Typing filters by words, arrow keys and Enter pick, Esc closes. It uses `aria-activedescendant`, and with `emptyLabel` a first option selects '' (`emptyShort` is the closed button's shorter text, `compact` the table-row size, `disabled` locks it; the Users page disables it for unchecked users). The popover is `position: fixed` under the trigger (or above it when there's no room), and it follows scrolling, so scrolling tables and cards can't clip it. The selection posts a hidden `timezone` field and saves on change via `?/timezone`. On the first admin page visit with nothing saved, the admin layout posts the browser's zone to `POST /api/admin/timezone`, which never overwrites a saved choice. That makes the dashboard, each user's "Default" and the server agree from the start. **Prepare** also posts the picker's value. UTC is only the fallback before any admin has visited.
+- **Per user:** `users.timezone` (migration 7), set in the Users page's Timezone column (`POST /api/admin/users/timezone`, saved on pick) or on the user's page. Empty means the default. Names are stored canonically (`canonicalTimezone`).
+- **In a run:** `startPreparation` computes `preparationRange(year, now, tz)` for the default and for every included user's zone, all sharing one `now`. The dataset's `range_start`/`range_end` are the widest of these, and that window is fetched from Jellystat and fed to `buildViews`. Each user's views are then trimmed to their own year (`restrictToRange`), and their report is built with their zone (`report.timezone`). Their request stats use their range too. `datasets.timezone` holds the default.
+
+**Viewer-timezone clock** (`$shared/clock.ts`): everything is prepared in the user's preparation timezone (above), except that the time-of-day stats follow whoever is watching.
 - Jellystat stores no timezone per play. Its `RemoteEndPoint` would allow a GeoIP lookup, but only if Jellyfin sees real client IPs: behind a Docker reverse proxy it records the proxy's address unless the proxy is listed in Jellyfin's *Known proxies*. So the viewer's browser zone is used instead.
 - The clock slide carries `utc`, a sparse histogram of seconds per UTC half-hour per week (`buildClockHistogram`, flat `[week, halfHour, seconds]` triples from `base`).
 - After mount, `Story.svelte` runs `localizeReport(report, viewerTimezone())`. This re-buckets the histogram into local hours using each week's mid-week offset, so DST is right to within a week and +5:30-style zones are handled. It recomputes the persona, window share and peak hour, and the summary's "Prime viewing" tile.
 - Nothing changes when the viewer is in the report's own zone, the zone is unknown, or the report predates `utc` (re-prepare to add it). Admin previews follow the admin's browser zone.
-- Days, streaks, the busiest day and binge dates stay in `WRAPPED_TIMEZONE`. `stats.clock` on the admin user page is also in that zone.
+- Days, streaks, the busiest day and binge dates stay in the user's preparation timezone. `stats.clock` on the admin user page is also in that zone.
 
 ## Metadata Resolution & Caching
 
@@ -288,7 +293,7 @@ The admin page lists them heaviest first and reports coverage. It also registers
 - Two decks (HTMLAudioElement → MediaElementSource → gain → music bus → master), both primed inside the start gesture so iOS allows later `play()` calls. Priming's muted play → pause only pauses a deck that no real `play()` has claimed since (deck `token`). Otherwise the first slide's track was paused for good whenever the following slides kept the same track (e.g. one generic track on every screen). `play()` of the track already on also resumes it if it was stopped.
 - On each slide the idle deck loads the planned track, seeks to its `start`, and fades in while the other fades out over 1.6 s. Generic tracks instead resume where they were left off (`resumeAt`, saved when a deck is paused or reused), unless that is within 2 s of the segment end or the story is rewatched. Title music always restarts at its `start`. The next slide's track is preloaded on the idle deck after the crossfade.
 - Only the chosen segment plays. When it reaches `end`, or the file ends, it loops back to `start` with a quick volume dip (`LOOP_FADE` 0.18 s each way), checked every 40 ms. A segment shorter than its slide, such as an 11 s clip under a 20 s slide, loops seamlessly.
-- **Deferred music** (`DEFERRED_MUSIC` in `story/context.ts`: Top Shows, Top Movies): these slides open on the previous slide's planned track and switch to their own when the slide's timeline calls `ctx.musicCue()`. Top Shows cues as "And your #1 show is…" appears; Top Movies cues as the #2 ticket lands. Each cue comes at least the 1.6 s crossfade before the #1 reveal. The idle deck preloads the slide's own track on entry. With reduced motion, the cue fires on entry.
+- **Deferred music** (`DEFERRED_MUSIC` in `story/context.ts`: Top Shows, Top Movies): these slides open on the latest **generic** track before them (`openingTrack`; it resumes where it left off), so the #1 show's music doesn't carry into the movies' build-up. Without generic music they keep the previous slide's track. They switch to their own when the slide's timeline calls `ctx.musicCue()`. Top Shows cues as "And your #1 show is…" appears; Top Movies cues as the #2 ticket lands. Each cue comes at least the 1.6 s crossfade before the #1 reveal. The idle deck preloads the slide's own track on entry, and after a cue it preloads the next slide's opening track. With reduced motion, the cue fires on entry.
 - A "now playing" pill shows the track label for about 5 s on each change (not for generic music, which has no label).
 - Sound effects are synthesized or admin-replaced (see Sound effects); setting `sfx_enabled` turns them all off. Mute is stored in localStorage.
 
@@ -306,25 +311,26 @@ The old mood-segment system (`audio_tracks`, cue sheets) was removed in migratio
   - `/admin/**` and `/api/admin/**` are admin-only.
   - `/wrapped` requires a signed-in user.
   - `/w/*` uses a bearer token.
-  - `/art` and `/audio` are public assets.
+  - `/art`, `/audio` and `/email` are public assets.
 - `safeNext` prevents open redirects.
 - CSRF: SvelteKit checks the origin of form actions, and hooks reject cross-origin non-GET `/api/*` calls. Admin API calls also require an `Origin` header. **Production requires `ORIGIN`**: without it adapter-node assumes https and rejects form posts.
 - Security headers are set on every response: strict CSP (hash mode, via `svelte.config.js`), `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, `X-Frame-Options: DENY`, and `no-store` on pages. `robots.txt` disallows everything.
 
-## Personal Links
+## Share Links
 
-`server/links.ts`, route `/w/[token]`. Links are created automatically by preparation (pipeline step 8). Admins copy them from the green **Copy link** button on the Users page, and regenerate or revoke them on the user detail page. There is no separate links page.
+`server/links.ts`, route `/w/[token]`. A link is a **public, view-only** page of one user's prepared Wrapped, safe to share: it creates no session, reaches no other page, setting or user, and never touches Jellyfin, Jellystat or Seerr. The page data is the report (with `userId` blanked), its music and sound-effect URLs (this app's `/audio`, `/art`), and an analytics token for that visit. Links are created automatically by preparation (pipeline step 8). Admins copy them with **Copy link** on the Users page, and replace ("New link") or revoke them on the user page. There is no separate links page.
 
-- **Token:** 32 random bytes encoded as base64url (43 chars).
+- **Token:** 8 characters, bit.ly-sized, from a 56-character alphabet without look-alikes (no 0/O, 1/l/I), drawn with `crypto.randomInt` (`linkCode`, about 46 bits). With the per-IP throttle below, guessing a valid code is hopeless.
+- **Legacy tokens:** links made before short codes were 43-char base64url. `TOKEN_RE` still accepts them, and at startup `shortenLegacyLinks()` gives each such user a newer short link (the one admins copy) while the old one stays valid. A new link or a revoke ends both.
 - **Storage:**
   - Lookup uses `tokenHash(token,'link')`, an HMAC with a key derived from `APP_SECRET`.
   - For the admin "Copy" action, the token is stored AES-256-GCM encrypted (`token_enc`).
   - The plaintext never touches logs, and `redactPath` masks `/w/<token>` in access logs.
 - **Lifecycle:**
-  - One active link per user; regenerating revokes the old one.
+  - One current link per user (plus, transitionally, a legacy long one); "New link" revokes the old ones.
   - Links persist across restarts and re-preparation until revoked.
   - Links are bound to the user, not the year: they open the featured year, and `?year=` works for that user's other prepared years.
-- **Access scope:** a link grants a read-only view of that one user's prepared report, plus an analytics token. It grants no session, no admin access, and no access to other users.
+- **Access scope:** read-only view of that one user's prepared report(s), plus an analytics token. No session, no admin access, no other users, no upstream services.
 - **Hardening:**
   - Malformed tokens are rejected before the DB lookup.
   - Failed lookups count toward a per-IP throttle (20 per 10 min, then HTTP 429).
@@ -334,7 +340,7 @@ The old mood-segment system (`audio_tracks`, cue sheets) was removed in migratio
 
 `server/analytics.ts`, `story/tracker.ts`, `/api/events`, `/admin/analytics`.
 
-- Real viewers (signed-in or link) get a signed **tracking token** binding user, year, mode and slide count for 12 h. Admin previews and the mock preview get no token, so they are never recorded.
+- Real viewers (signed-in or link) get a **tracking token** binding user, year, mode and slide count for 12 h. It's AES-GCM encrypted (`encrypt`, claims `t:'track'`), not just signed, so public share-link pages don't reveal the Jellyfin user id. Admin previews and the mock preview get no token, so they are never recorded.
 - **What the client sends:** per-slide deltas (enters, dwell ms excluding paused/hidden time, skips, revisits), plus furthest slide, completion, rewatches and active time.
   - It flushes on navigation (at most every 8 s), every 20 s, on completion, and via `sendBeacon` on hide/pagehide. This handles abandoned sessions.
   - A skip is a forward tap before 50% of the slide's duration.
@@ -355,7 +361,7 @@ There is one SQLite file, `DATA_DIR/wrapped.db`, run in WAL mode through `node:s
 | Table(s) | Contents |
 |---|---|
 | `settings` | `featured_year`, `sfx_enabled` |
-| `sessions`, `users`, `links` | Sign-in sessions, synced users (`included`: gets a Wrapped on the next preparation), personal links |
+| `sessions`, `users`, `links` | Sign-in sessions, synced users (`included`: gets a Wrapped on the next preparation; `timezone`), share links |
 | `datasets`, `active_datasets`, `reports` | Prepared data and which dataset is live per year |
 | `media_cache`, `artwork` | Metadata and artwork cache |
 | `view_visits`, `view_slides` | Engagement analytics |
@@ -372,7 +378,7 @@ The admin pages live in `src/routes/admin/**` with the shared stylesheet `src/li
 | Route | Purpose |
 |---|---|
 | `/admin` | Preparation. Polls `/api/admin/prep` every second while a run is active. Also connection tests and the featured year. |
-| `/admin/users` | User list, synced from Jellyfin. Checkboxes (with check all/none) choose who gets a Wrapped (`POST /api/admin/users/include`); the green **Copy link** button copies each user's personal link |
+| `/admin/users` | User list, synced from Jellyfin. Checkboxes (with check all/none) choose who gets a Wrapped (`POST /api/admin/users/include`); **Copy link** copies each user's share link, and **Copy email** copies a ready-to-send email (see below) |
 | `/admin/users/[id]` | Full stats, link management, engagement |
 | `/admin/preview/[id]` | Uses `+page@.svelte` to escape the admin shell |
 | `/admin/analytics` | Engagement analytics |
@@ -380,6 +386,14 @@ The admin pages live in `src/routes/admin/**` with the shared stylesheet `src/li
 | `/admin/sound-effects` | Sound effects on/off, and per effect: play built-in / yours, upload or YouTube replace, trim, volume, reset |
 
 Mutations are SvelteKit form actions (CSRF-protected).
+
+**"Wrapped is ready" email** (`lib/admin/email.ts`, Users page **Copy email**):
+- `wrappedEmail()` builds the subject, an HTML body (tables and inline styles only, 600 px, light card) and a plain-text alternative. The HTML has a banner, a greeting, a lime "Unwrap my <year>" button linking to the share link, three feature icons, a sound tip, the admin's name as sign-off, and the raw link as a fallback. The copy is deliberately short.
+- `copyRich()` writes `text/html` + `text/plain` with `navigator.clipboard.write`. Where that's unavailable (plain-http LAN), it falls back to a `copy` event via `execCommand('copy')`. Pasting into Gmail, Outlook or Apple Mail keeps the formatting.
+- Images are absolute URLs to `static/email/` (`banner.jpg` 1200×560, `icon-*.png` 160 px) on the current origin, because pasted emails can't carry attachments and most clients block `data:` images. The page warns when the origin is private (`isPrivateOrigin`), since recipients couldn't load them. `/email/*` is a public asset in `auth/guard.ts`.
+- The images were rendered with Playwright from HTML using the app's fonts (Bricolage Grotesque *standard* file, which has the width axis, plus Instrument Serif) and brand colours. They don't include a year, so they never need re-rendering.
+
+**Admin layout on phones:** the shell grid uses `minmax(0, 1fr)` and `.grid.cols-2` uses `minmax(min(320px, 100%), 1fr)`, so content can't widen the page. Under 640 px every admin `table` scrolls sideways on its own. On the Users page the Stats/Preview and Copy link/Copy email pairs may stack below 1440 px, so the table fits without scrolling.
 
 ## Deployment & CI
 
@@ -391,7 +405,7 @@ Mutations are SvelteKit form actions (CSRF-protected).
 - A per-target `deps` stage runs `pnpm install --prod --config.node-linker=hoisted`, which produces a flat, copyable `node_modules` of pure-JS runtime deps. Arm64 builds therefore need no emulated compilation.
 - Runtime: `node:24-alpine`, tini, python3 with yt-dlp in a venv (`/opt/yt-dlp`, symlinked to `/usr/local/bin/yt-dlp`), the non-root `node` user, `/data` as a volume, a `HEALTHCHECK` on `/api/health`.
 
-**docker-compose.yml:** pulls the image from GHCR, uses `env_file: .env`, and runs with a read-only root filesystem and `no-new-privileges`.
+**docker-compose.yml:** pulls the image from GHCR (`ghcr.io/${GHCR_OWNER:-calebvetter}/jellyfin-wrapped`; the GHCR package must be public for anonymous pulls), uses `env_file: .env`, and runs with a read-only root filesystem and `no-new-privileges`.
 
 **`.github/workflows/docker-publish.yml`:**
 - Runs tests and `svelte-check`, then a buildx multi-arch build (amd64 + arm64) with the GHA layer cache.
@@ -416,3 +430,4 @@ Mutations are SvelteKit form actions (CSRF-protected).
   ```
 - `scripts/screenshots.mjs` captures every slide from `/preview?slide=N&hold=1`. Flags: `--sizes mobile,small,desktop`, `--slides`, `--query`, `--reduced`, `--gate`. `scripts/contact-sheet.py` tiles the screenshots for review.
 - Mock data: `src/lib/mock/mockReport.ts`, served at `/preview` (enabled by `MOCK_PREVIEW`), with generated SVG art at `/preview/art/*`. Variants: `variant=light` (sparse viewer) and `variant=heavy` (80 days of watch time, to exercise long day-pill rows).
+- **README screenshots** (`docs/screenshots/*.jpg`) come from `/preview` (mock data only, never real users) with the "Mock preview" badge hidden (`.badge{display:none}`) and the browser in `America/Chicago`, the mock's timezone. They are mobile 390×844 at 2×, downscaled to 540 px wide, plus one desktop 1440×900 Year in Review shot, all as JPEG at quality 84. Re-take them when slides change visibly.

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import CopyButton from '$lib/admin/CopyButton.svelte';
+	import TimezonePicker from '$lib/admin/TimezonePicker.svelte';
 	import { ago, fmtDate, fmtDuration, fmtMinutes, pct } from '$lib/admin/util';
 	import { SLIDE_LABELS, type SlideKind } from '$shared/report';
 
@@ -10,6 +11,13 @@
 	const st = $derived((data.stats ?? {}) as Stats);
 	const linkUrl = $derived((form && 'linkUrl' in form ? form.linkUrl : null) ?? data.link?.url ?? null);
 	const label = (k: string) => SLIDE_LABELS[k as SlideKind] ?? k;
+	let tz = $state('');
+	$effect(() => {
+		tz = data.timezone ?? ''; // also when moving to another user
+	});
+	let tzForm: HTMLFormElement | undefined = $state();
+	let tzSaved = $state(false);
+	const effectiveTz = $derived(tz || data.defaultTimezone);
 	const pm = $derived(st.personalityMetrics as Record<string, number | string | null> | undefined);
 </script>
 
@@ -39,21 +47,54 @@
 
 <div class="grid cols-2">
 	<section class="card">
-		<div class="card-head"><h2>Personal link</h2>{#if data.link}<span class="badge ok">active</span>{/if}</div>
-		<p class="muted" style="margin-top:0">A passwordless URL that opens straight into {data.profile.name}'s Wrapped. Treat it like a password — anyone with it can view this user's Wrapped (and nothing else).</p>
+		<div class="card-head"><h2>Share link</h2>{#if data.link}<span class="badge ok">active</span>{/if}</div>
+		<p class="muted" style="margin-top:0">Opens {data.profile.name}'s Wrapped. View only, safe to share.</p>
 		{#if linkUrl}
+			<input class="link-field mono" readonly value={linkUrl} aria-label="Share link" onfocus={(e) => e.currentTarget.select()} />
 			<div class="row">
-				<input class="link-url mono" readonly value={linkUrl} aria-label="Personal link" onfocus={(e) => e.currentTarget.select()} />
-				<CopyButton text={linkUrl} label="Copy link" />
+				<CopyButton text={linkUrl} label="Copy link" variant="ok" />
+				<form method="POST" action="?/link" use:enhance><button class="btn small" title="Replace it; the old link stops working">New link</button></form>
+				<form method="POST" action="?/revoke" use:enhance><button class="btn small danger" title="The link stops working">Revoke</button></form>
 			</div>
-			{#if data.link}<p class="muted" style="margin:8px 0 0">Created {fmtDate(data.link.createdAt)} · last opened {ago(data.link.lastUsedAt)} · {data.link.useCount} opens</p>{/if}
-			<div class="row" style="margin-top:12px">
-				<form method="POST" action="?/link" use:enhance><button class="btn small">Regenerate</button></form>
-				<form method="POST" action="?/revoke" use:enhance><button class="btn small danger">Revoke</button></form>
-			</div>
+			{#if data.link}<p class="muted" style="margin:10px 0 0">{data.link.useCount ? `Opened ${data.link.useCount}× · last ${ago(data.link.lastUsedAt)}` : 'Not opened yet'}</p>{/if}
 		{:else}
-			<form method="POST" action="?/link" use:enhance><button class="btn primary">Generate personal link</button></form>
+			<form method="POST" action="?/link" use:enhance><button class="btn primary">Create link</button></form>
 		{/if}
+	</section>
+
+	<section class="card">
+		<div class="card-head"><h2>Timezone</h2>{#if tzSaved}<span class="badge ok">saved</span>{/if}</div>
+		<p class="muted" style="margin-top:0">For {data.profile.name}'s days, streaks and year. “Default” follows the Preparation page.</p>
+		<form
+			method="POST"
+			action="?/timezone"
+			bind:this={tzForm}
+			use:enhance={() =>
+				async ({ update, result }) => {
+					await update({ reset: false });
+					tzSaved = result.type === 'success';
+				}}
+		>
+			<TimezonePicker
+				bind:value={tz}
+				name="timezone"
+				emptyLabel="Default ({data.defaultTimezone})"
+				onchange={() => {
+					tzSaved = false;
+					queueMicrotask(() => tzForm?.requestSubmit());
+				}}
+			/>
+		</form>
+		<p class="muted" style="margin:8px 0 0">
+			{#if data.preparedIn && data.preparedIn !== effectiveTz}
+				Prepared in {data.preparedIn}. <a href="/admin">Prepare again</a> to apply.
+			{:else if data.preparedIn}
+				Prepared in {data.preparedIn}.
+			{:else}
+				Applies next time you prepare.
+			{/if}
+		</p>
+		{#if form && 'error' in form && form.error}<p class="alert bad" style="margin-top:8px">{form.error}</p>{/if}
 	</section>
 
 	<section class="card">
@@ -68,7 +109,7 @@
 				<div class="stat"><span class="v">{e.furthest + 1}/{e.slide_count}</span><span class="k">Furthest slide</span></div>
 				<div class="stat"><span class="v">{fmtDuration(e.active_ms)}</span><span class="k">Total time</span></div>
 			</div>
-			<p class="muted" style="margin:10px 0 0">First viewed {fmtDate(e.first_view)} · most recently {fmtDate(e.last_view)} · {e.link_visits} via personal link</p>
+			<p class="muted" style="margin:10px 0 0">First viewed {fmtDate(e.first_view)} · most recently {fmtDate(e.last_view)} · {e.link_visits} via link</p>
 		{:else}
 			<p class="muted">Hasn't opened their Wrapped yet.</p>
 		{/if}
@@ -213,7 +254,7 @@
 			<thead><tr><th>Started</th><th>Via</th><th class="num">Furthest</th><th>Completed</th><th class="num">Rewatches</th><th class="num">Time</th></tr></thead>
 			<tbody>
 				{#each data.visits as v}
-					<tr><td>{fmtDate(v.started_at)}</td><td>{v.mode === 'link' ? 'Personal link' : 'Sign-in'}</td><td class="num">{v.furthest_index + 1}/{v.slide_count}</td><td>{v.completed ? '✓' : '—'}</td><td class="num">{v.rewatches}</td><td class="num">{fmtDuration(v.active_ms)}</td></tr>
+					<tr><td>{fmtDate(v.started_at)}</td><td>{v.mode === 'link' ? 'Link' : 'Sign-in'}</td><td class="num">{v.furthest_index + 1}/{v.slide_count}</td><td>{v.completed ? '✓' : '—'}</td><td class="num">{v.rewatches}</td><td class="num">{fmtDuration(v.active_ms)}</td></tr>
 				{/each}
 			</tbody>
 		</table>

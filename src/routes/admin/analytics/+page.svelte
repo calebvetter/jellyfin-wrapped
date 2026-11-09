@@ -35,7 +35,7 @@
 			<div class="stat"><span class="v">{pct(data.totals.completed / Math.max(1, data.totals.visits))}</span><span class="k">Completion rate</span></div>
 			<div class="stat"><span class="v">{data.totals.rewatches}</span><span class="k">Rewatches</span></div>
 			<div class="stat"><span class="v">{fmtDuration(data.totals.activeMs / Math.max(1, data.totals.visits))}</span><span class="k">Avg. time / view</span></div>
-			<div class="stat"><span class="v">{pct(data.totals.linkVisits / Math.max(1, data.totals.visits))}</span><span class="k">Via personal link</span></div>
+			<div class="stat"><span class="v">{pct(data.totals.linkVisits / Math.max(1, data.totals.visits))}</span><span class="k">Via link</span></div>
 		</div>
 	</section>
 

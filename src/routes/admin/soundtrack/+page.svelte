@@ -86,7 +86,7 @@
 		</p>
 		{#if pickable}
 			<div class="row" style="margin-top:12px">
-				<button class="btn primary" disabled={bulk?.startsWith('Caching')} onclick={useTopTracks}>Use the most popular track for {pickable} title{pickable === 1 ? '' : 's'} without music</button>
+				<button class="btn primary" style="white-space:normal;text-align:left" disabled={bulk?.startsWith('Caching')} onclick={useTopTracks}>Use the most popular track for {pickable} title{pickable === 1 ? '' : 's'} without music</button>
 			</div>
 		{/if}
 		{#if bulk}<p class="alert {bulk.startsWith('Done') ? 'ok' : ''}" style="margin:10px 0 0" role="status">{bulk}</p>{/if}

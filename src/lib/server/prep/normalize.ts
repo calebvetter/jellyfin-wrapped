@@ -121,10 +121,15 @@ export function buildViews(records: PlaybackRecord[], opts: NormalizeOptions): V
 	}
 
 	// 3) restrict to the prepared range (attributed by view start); clip segments to range end
-	return views
-		.filter((v) => v.start >= opts.rangeStart && v.start < opts.rangeEnd)
-		.map((v) => clipView(v, opts.rangeEnd))
-		.sort((a, b) => a.start - b.start);
+	return restrictToRange(views, opts).sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Views that start within the range, clipped to its end. Also used per user: a run builds
+ * views for the widest range, then trims each user to their own timezone's year.
+ */
+export function restrictToRange(views: View[], range: NormalizeOptions): View[] {
+	return views.filter((v) => v.start >= range.rangeStart && v.start < range.rangeEnd).map((v) => clipView(v, range.rangeEnd));
 }
 
 function clipView(v: View, rangeEnd: number): View {
